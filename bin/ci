@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "==> Installing dependencies"
+mix deps.get
+
+echo "==> Checking formatting"
+mix format --check-formatted
+
+echo "==> Running Credo"
+mix credo
+
+echo "==> Compiling with warnings as errors"
+MIX_ENV=test mix compile --warnings-as-errors
+
+echo "==> Running tests"
+mix test
+
+echo "==> Building Docker image"
+docker build -t rougail_solstice:ci .
+
+echo ""
+echo "✓ All checks passed"
