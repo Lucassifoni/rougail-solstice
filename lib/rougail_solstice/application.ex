@@ -14,9 +14,7 @@ defmodule RougailSolstice.Application do
        repos: Application.fetch_env!(:rougail_solstice, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:rougail_solstice, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: RougailSolstice.PubSub},
-      # Start a worker by calling: RougailSolstice.Worker.start_link(arg)
-      # {RougailSolstice.Worker, arg},
-      # Start to serve requests, typically the last entry
+      RougailSolstice.Robot.Server,
       RougailSolsticeWeb.Endpoint
     ]
 

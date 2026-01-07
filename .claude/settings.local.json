@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(mix deps.get:*)"
+      "Bash(mix deps.get:*)",
+      "Bash(find:*)",
+      "Bash(tree:*)",
+      "Bash(cat:*)",
+      "Bash(mix test:*)"
     ]
   }
 }

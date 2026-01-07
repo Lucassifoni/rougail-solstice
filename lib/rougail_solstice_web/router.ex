@@ -18,6 +18,7 @@ defmodule RougailSolsticeWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    live "/robot", RobotLive
   end
 
   # Other scopes may use custom stacks.
