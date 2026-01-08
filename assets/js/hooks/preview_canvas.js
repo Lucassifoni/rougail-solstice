@@ -1,5 +1,6 @@
 const PreviewCanvas = {
   mounted() {
+    console.log("[PreviewCanvas] mounted");
     this.canvas = this.el.querySelector("canvas");
     this.ctx = this.canvas.getContext("2d");
     this.image = new Image();
@@ -8,8 +9,13 @@ const PreviewCanvas = {
     this.imageLoaded = false;
 
     this.image.onload = () => {
+      console.log("[PreviewCanvas] image loaded", this.image.naturalWidth, "x", this.image.naturalHeight);
       this.imageLoaded = true;
       this.draw();
+    };
+
+    this.image.onerror = (e) => {
+      console.error("[PreviewCanvas] image load error", e);
     };
 
     this.canvas.addEventListener("mousedown", (e) => this.onMouseDown(e));
@@ -18,6 +24,7 @@ const PreviewCanvas = {
     this.canvas.addEventListener("mouseleave", () => this.onMouseUp());
 
     this.handleEvent("update_preview_image", ({ src }) => {
+      console.log("[PreviewCanvas] received update_preview_image", src);
       this.image.src = src + "?v=" + Date.now();
     });
 

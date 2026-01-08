@@ -14,6 +14,7 @@ defmodule RougailSolstice.Application do
        repos: Application.fetch_env!(:rougail_solstice, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:rougail_solstice, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: RougailSolstice.PubSub},
+      RougailSolstice.ImageStore,
       RougailSolstice.Robot.Server,
       RougailSolstice.Interferometry.Server,
       RougailSolsticeWeb.Endpoint

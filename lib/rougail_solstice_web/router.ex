@@ -18,6 +18,7 @@ defmodule RougailSolsticeWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    get "/images/:key", ImageController, :show
     live "/robot", RobotLive
   end
 

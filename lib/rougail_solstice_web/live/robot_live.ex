@@ -198,26 +198,40 @@ defmodule RougailSolsticeWeb.RobotLive do
   end
 
   def handle_info({:interferometry_state_changed, state}, socket) do
+    prev_state = socket.assigns.interf_state
+    preview_changed = state.preview_frame_path != prev_state.preview_frame_path
+    dft_changed = state.dft_preview_path != prev_state.dft_preview_path
+
     socket =
       socket
       |> assign(:interf_state, state)
-      |> maybe_bump_preview_version(state)
-      |> maybe_bump_dft_version(state)
+      |> maybe_bump_version(:preview_version, preview_changed)
+      |> maybe_bump_version(:dft_version, dft_changed)
+      |> maybe_push_preview_update(state, preview_changed)
+      |> maybe_push_dft_update(state, dft_changed)
+      |> maybe_push_circle_update(state, prev_state)
 
     {:noreply, socket}
   end
 
-  defp maybe_bump_preview_version(socket, state) do
-    if state.preview_frame_path != socket.assigns.interf_state.preview_frame_path do
-      update(socket, :preview_version, &(&1 + 1))
-    else
-      socket
-    end
+  defp maybe_bump_version(socket, key, true), do: update(socket, key, &(&1 + 1))
+  defp maybe_bump_version(socket, _key, false), do: socket
+
+  defp maybe_push_preview_update(socket, state, true) do
+    push_event(socket, "update_preview_image", %{src: state.preview_frame_path})
   end
 
-  defp maybe_bump_dft_version(socket, state) do
-    if state.dft_preview_path != socket.assigns.interf_state.dft_preview_path do
-      update(socket, :dft_version, &(&1 + 1))
+  defp maybe_push_preview_update(socket, _state, false), do: socket
+
+  defp maybe_push_dft_update(socket, state, true) do
+    push_event(socket, "update_dft_image", %{src: state.dft_preview_path})
+  end
+
+  defp maybe_push_dft_update(socket, _state, false), do: socket
+
+  defp maybe_push_circle_update(socket, state, prev_state) do
+    if state.outline_circle != prev_state.outline_circle do
+      push_event(socket, "set_circle", state.outline_circle)
     else
       socket
     end
@@ -720,13 +734,6 @@ defmodule RougailSolsticeWeb.RobotLive do
           />
         </div>
       </form>
-
-      <script :if={@interf_state.preview_frame_path}>
-        window.liveSocket && window.liveSocket.execJS(
-          document.getElementById("preview-canvas-container"),
-          JSON.stringify([["push", {event: "update_preview_image", value: {src: "<%= @interf_state.preview_frame_path %>?v=<%= @preview_version %>"}}]])
-        )
-      </script>
     </div>
     """
   end
@@ -760,13 +767,6 @@ defmodule RougailSolsticeWeb.RobotLive do
           />
         </div>
       </form>
-
-      <script :if={@interf_state.dft_preview_path}>
-        window.liveSocket && window.liveSocket.execJS(
-          document.getElementById("dft-canvas-container"),
-          JSON.stringify([["push", {event: "update_dft_image", value: {src: "<%= @interf_state.dft_preview_path %>?v=<%= @dft_version %>"}}]])
-        )
-      </script>
     </div>
     """
   end

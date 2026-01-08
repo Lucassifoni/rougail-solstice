@@ -6,6 +6,8 @@ defmodule RougailSolstice.Interferometry.Server do
 
   use GenServer
 
+  require Logger
+
   alias RougailSolstice.Interferometry.CLI
   alias RougailSolstice.Interferometry.State
   alias RougailSolstice.Robot.Server, as: RobotServer
@@ -122,6 +124,10 @@ defmodule RougailSolstice.Interferometry.Server do
   end
 
   def handle_call(:start_liveview, _from, state) do
+    Logger.info(
+      "[InterfServer] start_liveview called, scheduling preview capture every #{@preview_interval}ms"
+    )
+
     new_state = State.start_liveview(state)
     schedule_preview_capture()
     broadcast(new_state)
@@ -164,10 +170,12 @@ defmodule RougailSolstice.Interferometry.Server do
   @impl true
   def handle_info(:capture_preview, state) do
     if state.liveview_active do
+      Logger.debug("[InterfServer] capture_preview tick - liveview active")
       new_state = capture_and_process_preview(state)
       schedule_preview_capture()
       {:noreply, new_state}
     else
+      Logger.debug("[InterfServer] capture_preview tick - liveview not active, skipping")
       {:noreply, state}
     end
   end
@@ -241,6 +249,14 @@ defmodule RougailSolstice.Interferometry.Server do
       state.optical_params,
       center_filter: state.center_filter_radius
     )
+  end
+
+  defp get_image_dimensions("/images/" <> key) do
+    case RougailSolstice.ImageStore.get(key) do
+      %{dimensions: {_, _} = dims} -> {:ok, dims}
+      %{dimensions: nil} -> {:error, :no_dimensions}
+      nil -> {:error, :not_found}
+    end
   end
 
   defp get_image_dimensions(path) do
