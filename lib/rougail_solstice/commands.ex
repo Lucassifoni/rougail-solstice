@@ -10,6 +10,7 @@ defmodule RougailSolstice.Commands do
 
   alias RougailSolstice.Robot.Server, as: RobotServer
   alias RougailSolstice.Interferometry.Server, as: InterfServer
+  alias RougailSolstice.Outline.Server, as: OutlineServer
 
   @type result :: {:ok, term()} | {:error, term()}
 
@@ -113,5 +114,44 @@ defmodule RougailSolstice.Commands do
   @spec capture_full_shot(GenServer.server()) :: result()
   def capture_full_shot(interf_server \\ InterfServer) do
     InterfServer.capture_full_shot(interf_server)
+  end
+
+  @spec enable_auto_outline(GenServer.server()) :: :ok
+  def enable_auto_outline(outline_server \\ OutlineServer) do
+    OutlineServer.enable(outline_server)
+  end
+
+  @spec disable_auto_outline(GenServer.server()) :: :ok
+  def disable_auto_outline(outline_server \\ OutlineServer) do
+    OutlineServer.disable(outline_server)
+  end
+
+  @spec auto_outline_enabled?(GenServer.server()) :: boolean()
+  def auto_outline_enabled?(outline_server \\ OutlineServer) do
+    OutlineServer.enabled?(outline_server)
+  end
+
+  @spec toggle_auto_outline(GenServer.server()) :: :ok
+  def toggle_auto_outline(outline_server \\ OutlineServer) do
+    if OutlineServer.enabled?(outline_server) do
+      OutlineServer.disable(outline_server)
+    else
+      OutlineServer.enable(outline_server)
+    end
+  end
+
+  @spec get_outline_state(GenServer.server()) :: RougailSolstice.Outline.State.t()
+  def get_outline_state(outline_server \\ OutlineServer) do
+    OutlineServer.get_state(outline_server)
+  end
+
+  @spec update_detection_params(GenServer.server(), map()) :: :ok
+  def update_detection_params(outline_server \\ OutlineServer, params) when is_map(params) do
+    OutlineServer.update_detection_params(outline_server, params)
+  end
+
+  @spec update_outline_state_params(GenServer.server(), map()) :: :ok
+  def update_outline_state_params(outline_server \\ OutlineServer, params) when is_map(params) do
+    OutlineServer.update_state_params(outline_server, params)
   end
 end

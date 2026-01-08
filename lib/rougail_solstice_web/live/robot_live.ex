@@ -1,17 +1,22 @@
 defmodule RougailSolsticeWeb.RobotLive do
   use RougailSolsticeWeb, :live_view
 
+  import RougailSolsticeWeb.DetectionComponents
+
   alias RougailSolstice.Commands
   alias RougailSolstice.Interferometry
   alias RougailSolstice.Interferometry.Server, as: InterfServer
   alias RougailSolstice.Robot.CameraAdapter
   alias RougailSolstice.Robot.Server
 
+  @outline_preview_topic "outline:preview"
+
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Server.subscribe()
       InterfServer.subscribe()
+      Phoenix.PubSub.subscribe(RougailSolstice.PubSub, @outline_preview_topic)
     end
 
     state = Server.get_state()
@@ -19,15 +24,19 @@ defmodule RougailSolsticeWeb.RobotLive do
     adapters = CameraAdapter.all()
     configs = Interferometry.list_configs()
 
+    outline_state = Commands.get_outline_state()
+
     {:ok,
      socket
      |> assign(:state, state)
      |> assign(:interf_state, interf_state)
+     |> assign(:outline_state, outline_state)
      |> assign(:adapters, adapters)
      |> assign(:configs, configs)
      |> assign(:selected_config_id, nil)
      |> assign(:preview_version, 0)
      |> assign(:dft_version, 0)
+     |> assign(:auto_outline_enabled, Commands.auto_outline_enabled?())
      |> assign(:error, nil)}
   end
 
@@ -192,6 +201,49 @@ defmodule RougailSolsticeWeb.RobotLive do
     {:noreply, socket}
   end
 
+  def handle_event("toggle_auto_outline", _params, socket) do
+    Commands.toggle_auto_outline()
+    outline_state = Commands.get_outline_state()
+
+    {:noreply,
+     socket
+     |> assign(:auto_outline_enabled, not socket.assigns.auto_outline_enabled)
+     |> assign(:outline_state, outline_state)}
+  end
+
+  def handle_event("update_detection_params", params, socket) do
+    detection_params = %{
+      edge_ray_count: parse_int(params["edge_ray_count"]),
+      edge_threshold: parse_int(params["edge_threshold"]),
+      canny_low: parse_int(params["canny_low"]),
+      canny_high: parse_int(params["canny_high"]),
+      blur_kernel_size: parse_int(params["blur_kernel_size"]),
+      max_edge_dim: parse_int(params["max_edge_dim"]),
+      ransac_samples: parse_int(params["ransac_samples"]),
+      ransac_inlier_threshold_ratio: parse_number(params["ransac_inlier_threshold_ratio"]),
+      ransac_refinement_iterations: parse_int(params["ransac_refinement_iterations"]),
+      debug_save: params["debug_save"] == "true"
+    }
+
+    Commands.update_detection_params(detection_params)
+    outline_state = Commands.get_outline_state()
+
+    {:noreply, assign(socket, :outline_state, outline_state)}
+  end
+
+  def handle_event("update_outline_state_params", params, socket) do
+    state_params = %{
+      max_frames: parse_int(params["max_frames"]),
+      min_confidence: parse_number(params["min_confidence"]),
+      threshold_percentile: parse_number(params["threshold_percentile"])
+    }
+
+    Commands.update_outline_state_params(state_params)
+    outline_state = Commands.get_outline_state()
+
+    {:noreply, assign(socket, :outline_state, outline_state)}
+  end
+
   @impl true
   def handle_info({:robot_state_changed, state}, socket) do
     {:noreply, assign(socket, :state, state)}
@@ -214,6 +266,11 @@ defmodule RougailSolsticeWeb.RobotLive do
     {:noreply, socket}
   end
 
+  def handle_info({:preview_edges, url}, socket) do
+    src = url <> "?v=" <> Integer.to_string(System.monotonic_time())
+    {:noreply, push_event(socket, "update_edges_overlay", %{src: src})}
+  end
+
   defp maybe_bump_version(socket, key, true), do: update(socket, key, &(&1 + 1))
   defp maybe_bump_version(socket, _key, false), do: socket
 
@@ -229,12 +286,30 @@ defmodule RougailSolsticeWeb.RobotLive do
 
   defp maybe_push_dft_update(socket, _state, false), do: socket
 
+  @canvas_width 640
+  @canvas_height 480
+
   defp maybe_push_circle_update(socket, state, prev_state) do
     if state.outline_circle != prev_state.outline_circle do
-      push_event(socket, "set_circle", state.outline_circle)
+      scaled = scale_circle_for_canvas(state.outline_circle, state.preview_dimensions)
+      push_event(socket, "set_circle", scaled)
     else
       socket
     end
+  end
+
+  defp scale_circle_for_canvas(circle, nil), do: circle
+
+  defp scale_circle_for_canvas(circle, {img_w, img_h}) do
+    scale_x = @canvas_width / img_w
+    scale_y = @canvas_height / img_h
+    scale = min(scale_x, scale_y)
+
+    %{
+      cx: circle.cx * scale,
+      cy: circle.cy * scale,
+      r: circle.r * scale
+    }
   end
 
   defp format_error(reason) when is_atom(reason) do
@@ -297,10 +372,15 @@ defmodule RougailSolsticeWeb.RobotLive do
 
         <.interferometry_controls interf_state={@interf_state} />
 
+        <div class="mt-6">
+          <.detection_settings outline_state={@outline_state} />
+        </div>
+
         <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
           <.preview_canvas_panel
             interf_state={@interf_state}
             preview_version={@preview_version}
+            auto_outline_enabled={@auto_outline_enabled}
           />
           <.dft_canvas_panel
             interf_state={@interf_state}
@@ -690,10 +770,25 @@ defmodule RougailSolsticeWeb.RobotLive do
   defp preview_canvas_panel(assigns) do
     ~H"""
     <div class="bg-white rounded-lg shadow p-6">
-      <div class="flex items-center gap-2 mb-4">
-        <h2 class="text-lg font-semibold">Preview - Mirror Outline</h2>
-        <.gamepad_badge text="D-pad: pos" />
-        <.gamepad_badge text="L/R: size" />
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <h2 class="text-lg font-semibold">Preview - Mirror Outline</h2>
+          <.gamepad_badge text="D-pad: pos" />
+          <.gamepad_badge text="L/R: size" />
+        </div>
+        <button
+          type="button"
+          phx-click="toggle_auto_outline"
+          class={[
+            "px-3 py-1.5 rounded text-sm font-medium transition-colors",
+            if(@auto_outline_enabled,
+              do: "bg-green-500 hover:bg-green-600 text-white",
+              else: "bg-gray-200 hover:bg-gray-300 text-gray-700"
+            )
+          ]}
+        >
+          {if @auto_outline_enabled, do: "Auto-outline ON", else: "Auto-outline OFF"}
+        </button>
       </div>
 
       <div

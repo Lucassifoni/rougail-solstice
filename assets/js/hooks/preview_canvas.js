@@ -4,9 +4,12 @@ const PreviewCanvas = {
     this.canvas = this.el.querySelector("canvas");
     this.ctx = this.canvas.getContext("2d");
     this.image = new Image();
+    this.edgesImage = new Image();
     this.circle = { cx: 0, cy: 0, r: 100 };
     this.dragging = null;
     this.imageLoaded = false;
+    this.edgesLoaded = false;
+    this.showEdgesOverlay = true;
 
     this.image.onload = () => {
       console.log("[PreviewCanvas] image loaded", this.image.naturalWidth, "x", this.image.naturalHeight);
@@ -16,6 +19,17 @@ const PreviewCanvas = {
 
     this.image.onerror = (e) => {
       console.error("[PreviewCanvas] image load error", e);
+    };
+
+    this.edgesImage.onload = () => {
+      console.log("[PreviewCanvas] edges loaded", this.edgesImage.naturalWidth, "x", this.edgesImage.naturalHeight);
+      this.edgesLoaded = true;
+      this.draw();
+    };
+
+    this.edgesImage.onerror = (e) => {
+      console.error("[PreviewCanvas] edges load error", e);
+      this.edgesLoaded = false;
     };
 
     this.canvas.addEventListener("mousedown", (e) => this.onMouseDown(e));
@@ -32,10 +46,21 @@ const PreviewCanvas = {
       this.circle = circle;
       this.draw();
     });
+
+    this.handleEvent("update_edges_overlay", (payload) => {
+      try {
+        console.log("[PreviewCanvas] received update_edges_overlay", payload);
+        if (payload && payload.src) {
+          this.edgesImage.src = payload.src;
+        }
+      } catch (e) {
+        console.error("[PreviewCanvas] error in update_edges_overlay", e);
+      }
+    });
   },
 
   draw() {
-    const { canvas, ctx, image, circle } = this;
+    const { canvas, ctx, image, circle, edgesImage } = this;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -51,6 +76,21 @@ const PreviewCanvas = {
       ctx.drawImage(image, x, y, imgW, imgH);
 
       this.imageOffset = { x, y, scale };
+    }
+
+    if (this.showEdgesOverlay && this.edgesLoaded && edgesImage && edgesImage.naturalWidth > 0) {
+      const edgeScale = Math.min(
+        canvas.width / edgesImage.naturalWidth,
+        canvas.height / edgesImage.naturalHeight
+      );
+      const edgeW = edgesImage.naturalWidth * edgeScale;
+      const edgeH = edgesImage.naturalHeight * edgeScale;
+      const edgeX = (canvas.width - edgeW) / 2;
+      const edgeY = (canvas.height - edgeH) / 2;
+
+      ctx.globalCompositeOperation = "lighten";
+      ctx.drawImage(edgesImage, edgeX, edgeY, edgeW, edgeH);
+      ctx.globalCompositeOperation = "source-over";
     }
 
     ctx.strokeStyle = "#00ff00";
