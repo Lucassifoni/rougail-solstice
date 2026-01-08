@@ -20,6 +20,7 @@ defmodule RougailSolstice.Interferometry.State do
           full_shot_path: Path.t() | nil,
           full_shot_dimensions: dimensions() | nil,
           dft_preview_path: Path.t() | nil,
+          wft_preview_path: Path.t() | nil,
           last_analysis: map() | nil,
           outline_circle: circle(),
           center_filter_radius: pos_integer(),
@@ -33,6 +34,7 @@ defmodule RougailSolstice.Interferometry.State do
             full_shot_path: nil,
             full_shot_dimensions: nil,
             dft_preview_path: nil,
+            wft_preview_path: nil,
             last_analysis: nil,
             outline_circle: %{cx: 0, cy: 0, r: 100},
             center_filter_radius: 10,
@@ -76,6 +78,11 @@ defmodule RougailSolstice.Interferometry.State do
   @spec set_dft_preview(t(), Path.t()) :: t()
   def set_dft_preview(%__MODULE__{} = state, path) when is_binary(path) do
     %{state | dft_preview_path: path}
+  end
+
+  @spec set_wft_preview(t(), Path.t()) :: t()
+  def set_wft_preview(%__MODULE__{} = state, path) when is_binary(path) do
+    %{state | wft_preview_path: path}
   end
 
   @spec set_analysis(t(), map()) :: t()

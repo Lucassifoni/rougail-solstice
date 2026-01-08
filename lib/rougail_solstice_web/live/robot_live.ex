@@ -36,6 +36,7 @@ defmodule RougailSolsticeWeb.RobotLive do
      |> assign(:selected_config_id, nil)
      |> assign(:preview_version, 0)
      |> assign(:dft_version, 0)
+     |> assign(:wft_version, 0)
      |> assign(:auto_outline_enabled, Commands.auto_outline_enabled?())
      |> assign(:error, nil)}
   end
@@ -253,15 +254,20 @@ defmodule RougailSolsticeWeb.RobotLive do
     prev_state = socket.assigns.interf_state
     preview_changed = state.preview_frame_path != prev_state.preview_frame_path
     dft_changed = state.dft_preview_path != prev_state.dft_preview_path
+    wft_changed = state.wft_preview_path != prev_state.wft_preview_path
+    center_filter_changed = state.center_filter_radius != prev_state.center_filter_radius
 
     socket =
       socket
       |> assign(:interf_state, state)
       |> maybe_bump_version(:preview_version, preview_changed)
       |> maybe_bump_version(:dft_version, dft_changed)
+      |> maybe_bump_version(:wft_version, wft_changed)
       |> maybe_push_preview_update(state, preview_changed)
       |> maybe_push_dft_update(state, dft_changed)
+      |> maybe_push_wft_update(state, wft_changed)
       |> maybe_push_circle_update(state, prev_state)
+      |> maybe_push_center_filter_update(state, center_filter_changed)
 
     {:noreply, socket}
   end
@@ -285,6 +291,18 @@ defmodule RougailSolsticeWeb.RobotLive do
   end
 
   defp maybe_push_dft_update(socket, _state, false), do: socket
+
+  defp maybe_push_wft_update(socket, state, true) do
+    push_event(socket, "update_wft_image", %{src: state.wft_preview_path})
+  end
+
+  defp maybe_push_wft_update(socket, _state, false), do: socket
+
+  defp maybe_push_center_filter_update(socket, state, true) do
+    push_event(socket, "set_center_filter", %{radius: state.center_filter_radius})
+  end
+
+  defp maybe_push_center_filter_update(socket, _state, false), do: socket
 
   @canvas_width 640
   @canvas_height 480
@@ -376,7 +394,7 @@ defmodule RougailSolsticeWeb.RobotLive do
           <.detection_settings outline_state={@outline_state} />
         </div>
 
-        <div class="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
           <.preview_canvas_panel
             interf_state={@interf_state}
             preview_version={@preview_version}
@@ -385,6 +403,10 @@ defmodule RougailSolsticeWeb.RobotLive do
           <.dft_canvas_panel
             interf_state={@interf_state}
             dft_version={@dft_version}
+          />
+          <.wft_canvas_panel
+            interf_state={@interf_state}
+            wft_version={@wft_version}
           />
         </div>
 
@@ -862,6 +884,32 @@ defmodule RougailSolsticeWeb.RobotLive do
           />
         </div>
       </form>
+    </div>
+    """
+  end
+
+  defp wft_canvas_panel(assigns) do
+    ~H"""
+    <div class="bg-white rounded-lg shadow p-6">
+      <h2 class="text-lg font-semibold mb-4">Wavefront Map</h2>
+
+      <div
+        id="wft-canvas-container"
+        phx-hook="WftCanvas"
+        phx-update="ignore"
+        class="relative bg-gray-900 rounded"
+      >
+        <canvas width="572" height="512" class="w-full"></canvas>
+      </div>
+
+      <div class="mt-4 text-xs text-gray-500">
+        <span :if={@interf_state.wft_preview_path}>
+          Blue = low, Red = high (waves)
+        </span>
+        <span :if={!@interf_state.wft_preview_path}>
+          Run analysis to see wavefront
+        </span>
+      </div>
     </div>
     """
   end

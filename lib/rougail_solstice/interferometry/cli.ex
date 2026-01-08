@@ -6,7 +6,10 @@ defmodule RougailSolstice.Interferometry.CLI do
   Supports two modes configured via application config:
   - :native - calls dftfringe-cli directly (must be in PATH)
   - :docker - calls via docker run with volume mounts
+  - :mock - returns dummy data for testing
   """
+
+  require Logger
 
   @type circle :: %{cx: number(), cy: number(), r: number()}
   @type optical_params :: %{
@@ -41,25 +44,71 @@ defmodule RougailSolstice.Interferometry.CLI do
   end
 
   defp run_dft_preview(input_path, circle, output_path) do
-    {cli_input, cli_output} = translate_paths(input_path, output_path)
+    case mode() do
+      :native ->
+        run_dft_preview_native(input_path, circle, output_path)
 
+      :docker ->
+        run_dft_preview_docker(input_path, circle, output_path)
+    end
+  end
+
+  defp run_dft_preview_native(input_path, circle, output_path) do
     args = [
-      "--input",
-      cli_input,
-      "--circle",
-      format_circle(circle),
+      "--input", input_path,
+      "--circle", format_circle(circle),
       "--dft-preview",
-      "--dft-output",
-      cli_output
+      "--dft-output", output_path
     ]
 
-    with {:ok, _output} <- run_cli(args, [input_path, output_path]),
-         true <- File.exists?(output_path) do
-      {:ok, output_path}
-    else
-      false -> {:error, :output_not_created}
-      {:error, _} = error -> error
+    case System.cmd("dftfringe-cli", args, stderr_to_stdout: true) do
+      {_output, 0} ->
+        if File.exists?(output_path), do: {:ok, output_path}, else: {:error, :output_not_created}
+
+      {output, code} ->
+        {:error, {:cli_error, code, output}}
     end
+  end
+
+  defp run_dft_preview_docker(input_path, circle, output_path) do
+    with_staging_dir(fn staging_dir ->
+      input_basename = Path.basename(input_path)
+      output_basename = Path.basename(output_path)
+      staged_input = Path.join(staging_dir, input_basename)
+
+      File.cp!(input_path, staged_input)
+
+      container_input = Path.join(docker_mount_dir(), input_basename)
+      container_output = Path.join(docker_mount_dir(), output_basename)
+
+      args = [
+        "--input", container_input,
+        "--circle", format_circle(circle),
+        "--dft-preview",
+        "--dft-output", container_output
+      ]
+
+      docker_args =
+        ["run", "--rm", "-v", "#{staging_dir}:#{docker_mount_dir()}", docker_image()] ++ args
+
+      Logger.debug("[CLI] Running: docker #{Enum.join(docker_args, " ")}")
+
+      case System.cmd("docker", docker_args, stderr_to_stdout: true) do
+        {_output, 0} ->
+          staged_output = Path.join(staging_dir, output_basename)
+
+          if File.exists?(staged_output) do
+            File.cp!(staged_output, output_path)
+            {:ok, output_path}
+          else
+            {:error, :output_not_created}
+          end
+
+        {output, code} ->
+          Logger.error("[CLI] Docker command failed (#{code}): #{output}")
+          {:error, {:cli_error, code, output}}
+      end
+    end)
   end
 
   @spec analyze(Path.t(), circle(), optical_params(), keyword()) ::
@@ -73,20 +122,92 @@ defmodule RougailSolstice.Interferometry.CLI do
     wft_path = Path.join(output_dir, "#{basename}_#{timestamp}.wft")
     csv_path = Path.join(output_dir, "#{basename}_#{timestamp}_zernikes.csv")
 
-    host_paths = [input_path, wft_path, csv_path]
-    [cli_input, cli_wft, cli_csv] = translate_paths(host_paths)
+    case mode() do
+      :mock ->
+        {:ok, output} = {:ok, mock_output()}
+        {:ok, parsed} = parse_structured_output(output)
+        {:ok, Map.merge(parsed, %{wft_path: nil, csv_path: nil})}
 
-    args = build_analyze_args(cli_input, circle, params, center_filter, cli_wft, cli_csv)
+      :native ->
+        run_analyze_native(input_path, circle, params, center_filter, wft_path, csv_path)
 
-    with {:ok, output} <- run_cli(args, host_paths),
-         {:ok, parsed} <- parse_structured_output(output) do
-      result =
-        parsed
-        |> Map.put(:wft_path, if(File.exists?(wft_path), do: wft_path))
-        |> Map.put(:csv_path, if(File.exists?(csv_path), do: csv_path))
-
-      {:ok, result}
+      :docker ->
+        run_analyze_docker(input_path, circle, params, center_filter, wft_path, csv_path)
     end
+  end
+
+  defp run_analyze_native(input_path, circle, params, center_filter, wft_path, csv_path) do
+    args = build_analyze_args(input_path, circle, params, center_filter, wft_path, csv_path)
+
+    case System.cmd("dftfringe-cli", args, stderr_to_stdout: true) do
+      {output, 0} ->
+        with {:ok, parsed} <- parse_structured_output(output) do
+          result =
+            parsed
+            |> Map.put(:wft_path, if(File.exists?(wft_path), do: wft_path))
+            |> Map.put(:csv_path, if(File.exists?(csv_path), do: csv_path))
+
+          {:ok, result}
+        end
+
+      {output, code} ->
+        {:error, {:cli_error, code, output}}
+    end
+  end
+
+  defp run_analyze_docker(input_path, circle, params, center_filter, wft_path, csv_path) do
+    Logger.info("""
+    [CLI] analyze called with:
+      input_path: #{input_path}
+      circle: cx=#{circle.cx}, cy=#{circle.cy}, r=#{circle.r}
+      optical_params: diameter=#{params.diameter}, roc=#{params.roc}, lambda=#{params.lambda}, conic=#{params.conic}, obstruction=#{params[:obstruction]}
+      center_filter: #{center_filter}
+    """)
+
+    with_staging_dir(fn staging_dir ->
+      input_basename = Path.basename(input_path)
+      wft_basename = Path.basename(wft_path)
+      csv_basename = Path.basename(csv_path)
+
+      staged_input = Path.join(staging_dir, input_basename)
+      File.cp!(input_path, staged_input)
+
+      container_input = Path.join(docker_mount_dir(), input_basename)
+      container_wft = Path.join(docker_mount_dir(), wft_basename)
+      container_csv = Path.join(docker_mount_dir(), csv_basename)
+
+      args = build_analyze_args(container_input, circle, params, center_filter, container_wft, container_csv)
+
+      docker_args =
+        ["run", "--rm", "-v", "#{staging_dir}:#{docker_mount_dir()}", docker_image()] ++ args
+
+      Logger.info("[CLI] Running: docker #{Enum.join(docker_args, " ")}")
+
+      case System.cmd("docker", docker_args, stderr_to_stdout: true) do
+        {output, 0} ->
+          Logger.info("[CLI] Raw output:\n#{output}")
+
+          staged_wft = Path.join(staging_dir, wft_basename)
+          staged_csv = Path.join(staging_dir, csv_basename)
+
+          if File.exists?(staged_wft), do: File.cp!(staged_wft, wft_path)
+          if File.exists?(staged_csv), do: File.cp!(staged_csv, csv_path)
+
+          with {:ok, parsed} <- parse_structured_output(output) do
+            result =
+              parsed
+              |> Map.put(:wft_path, if(File.exists?(wft_path), do: wft_path))
+              |> Map.put(:csv_path, if(File.exists?(csv_path), do: csv_path))
+
+            Logger.info("[CLI] Parsed result: rms=#{result.rms_waves}, pv=#{result.pv_waves}, strehl=#{result.strehl}")
+            {:ok, result}
+          end
+
+        {output, code} ->
+          Logger.error("[CLI] Docker analyze failed (#{code}): #{output}")
+          {:error, {:cli_error, code, output}}
+      end
+    end)
   end
 
   @spec parse_structured_output(String.t()) :: {:ok, map()} | {:error, term()}
@@ -166,44 +287,14 @@ defmodule RougailSolstice.Interferometry.CLI do
   defp docker_image, do: Keyword.get(config(), :docker_image, "dftfringe-cli:latest")
   defp docker_mount_dir, do: Keyword.get(config(), :docker_mount_dir, "/data")
 
-  defp translate_paths(paths) when is_list(paths) do
-    case mode() do
-      :native ->
-        paths
+  defp with_staging_dir(fun) do
+    staging_dir = Path.join(System.tmp_dir!(), "dftfringe_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(staging_dir)
 
-      :docker ->
-        Enum.map(paths, fn path ->
-          Path.join(docker_mount_dir(), Path.basename(path))
-        end)
-    end
-  end
-
-  defp translate_paths(input_path, output_path) do
-    [cli_input, cli_output] = translate_paths([input_path, output_path])
-    {cli_input, cli_output}
-  end
-
-  defp run_cli(args, host_paths) do
-    case mode() do
-      :mock ->
-        {:ok, mock_output()}
-
-      :native ->
-        case System.cmd("dftfringe-cli", args, stderr_to_stdout: true) do
-          {output, 0} -> {:ok, output}
-          {output, code} -> {:error, {:cli_error, code, output}}
-        end
-
-      :docker ->
-        volume_mounts = build_volume_mounts(host_paths)
-
-        docker_args =
-          ["run", "--rm"] ++ volume_mounts ++ [docker_image(), "dftfringe-cli"] ++ args
-
-        case System.cmd("docker", docker_args, stderr_to_stdout: true) do
-          {output, 0} -> {:ok, output}
-          {output, code} -> {:error, {:cli_error, code, output}}
-        end
+    try do
+      fun.(staging_dir)
+    after
+      File.rm_rf(staging_dir)
     end
   end
 
@@ -217,15 +308,6 @@ defmodule RougailSolstice.Interferometry.CLI do
     zernike_nulled_1\t0.0005
     zernike_nulled_2\t0.001
     """
-  end
-
-  defp build_volume_mounts(paths) do
-    paths
-    |> Enum.map(&Path.dirname/1)
-    |> Enum.uniq()
-    |> Enum.flat_map(fn dir ->
-      ["-v", "#{dir}:#{docker_mount_dir()}"]
-    end)
   end
 
   defp parse_float(str) do

@@ -10,11 +10,12 @@ defmodule RougailSolstice.Interferometry.Server do
 
   alias RougailSolstice.Interferometry.CLI
   alias RougailSolstice.Interferometry.State
+  alias RougailSolstice.Interferometry.WFT
   alias RougailSolstice.Robot.Server, as: RobotServer
 
   @pubsub RougailSolstice.PubSub
   @topic "interferometry:state"
-  @preview_interval 100
+  @preview_interval 1000
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -207,20 +208,53 @@ defmodule RougailSolstice.Interferometry.Server do
 
   defp process_dft_preview(state) do
     if State.ready_for_dft_preview?(state) do
-      dft_output =
-        Path.join(System.tmp_dir!(), "dft_preview_#{System.unique_integer([:positive])}.png")
-
-      case CLI.dft_preview(state.preview_frame_path, state.outline_circle, dft_output) do
-        {:ok, dft_path} ->
-          new_state = State.set_dft_preview(state, dft_path)
-          broadcast(new_state)
-          new_state
-
-        {:error, _} ->
+      with {:ok, input_path} <- resolve_preview_to_file(state.preview_frame_path),
+           dft_output =
+             Path.join(System.tmp_dir!(), "dft_preview_#{System.unique_integer([:positive])}.png"),
+           {:ok, _dft_path} <- CLI.dft_preview(input_path, state.outline_circle, dft_output),
+           {:ok, dft_url} <- store_dft_preview(dft_output) do
+        new_state = State.set_dft_preview(state, dft_url)
+        broadcast(new_state)
+        new_state
+      else
+        {:error, reason} ->
+          Logger.warning("[InterfServer] DFT preview failed: #{inspect(reason)}")
           state
       end
     else
       state
+    end
+  end
+
+  defp resolve_preview_to_file("/images/" <> key) do
+    case RougailSolstice.ImageStore.get(key) do
+      %{binary: binary} ->
+        temp_path =
+          Path.join(System.tmp_dir!(), "preview_input_#{System.unique_integer([:positive])}.jpg")
+
+        File.write!(temp_path, binary)
+        {:ok, temp_path}
+
+      nil ->
+        {:error, :preview_not_found}
+    end
+  end
+
+  defp resolve_preview_to_file(path) when is_binary(path) do
+    if File.exists?(path), do: {:ok, path}, else: {:error, :file_not_found}
+  end
+
+  defp store_dft_preview(file_path) do
+    case File.read(file_path) do
+      {:ok, binary} ->
+        key = "dft_preview_#{System.unique_integer([:positive])}"
+        RougailSolstice.ImageStore.delete_prefix("dft_preview_")
+        RougailSolstice.ImageStore.put(key, binary, content_type: "image/png")
+        File.rm(file_path)
+        {:ok, RougailSolstice.ImageStore.url(key)}
+
+      {:error, reason} ->
+        {:error, {:read_failed, reason}}
     end
   end
 
@@ -232,13 +266,34 @@ defmodule RougailSolstice.Interferometry.Server do
 
   defp run_analysis_if_ready(state) do
     with true <- State.ready_for_analysis?(state),
-         {:ok, scaled_circle} <- State.scale_circle_to_full_shot(state),
-         {:ok, result} <- run_cli_analysis(state, scaled_circle) do
-      new_state = State.set_analysis(state, result)
-      broadcast(new_state)
-      new_state
+         {:ok, scaled_circle} <- State.scale_circle_to_full_shot(state) do
+      Logger.info("""
+      [InterfServer] Running analysis:
+        preview_dimensions: #{inspect(state.preview_dimensions)}
+        full_shot_dimensions: #{inspect(state.full_shot_dimensions)}
+        outline_circle (preview): cx=#{state.outline_circle.cx}, cy=#{state.outline_circle.cy}, r=#{state.outline_circle.r}
+        scaled_circle (full shot): cx=#{scaled_circle.cx}, cy=#{scaled_circle.cy}, r=#{scaled_circle.r}
+      """)
+
+      case run_cli_analysis(state, scaled_circle) do
+        {:ok, result} ->
+          new_state = State.set_analysis(state, result)
+          new_state = render_wft_preview(new_state, result)
+          broadcast(new_state)
+          new_state
+
+        {:error, reason} ->
+          Logger.error("[InterfServer] Analysis failed: #{inspect(reason)}")
+          state
+      end
     else
-      _ -> state
+      false ->
+        Logger.debug("[InterfServer] Not ready for analysis")
+        state
+
+      {:error, reason} ->
+        Logger.error("[InterfServer] Circle scaling failed: #{inspect(reason)}")
+        state
     end
   end
 
@@ -249,6 +304,31 @@ defmodule RougailSolstice.Interferometry.Server do
       state.optical_params,
       center_filter: state.center_filter_radius
     )
+  end
+
+  defp render_wft_preview(state, %{wft_path: nil}), do: state
+
+  defp render_wft_preview(state, %{wft_path: wft_path}) do
+    case WFT.parse_file(wft_path) do
+      {:ok, wft} ->
+        case WFT.render_to_png(wft, size: 512) do
+          {:ok, png_binary} ->
+            key = "wft_preview_#{System.unique_integer([:positive])}"
+            RougailSolstice.ImageStore.delete_prefix("wft_preview_")
+            RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
+            url = RougailSolstice.ImageStore.url(key)
+            Logger.info("[InterfServer] WFT preview rendered: #{url}")
+            State.set_wft_preview(state, url)
+
+          {:error, reason} ->
+            Logger.warning("[InterfServer] WFT render failed: #{inspect(reason)}")
+            state
+        end
+
+      {:error, reason} ->
+        Logger.warning("[InterfServer] WFT parse failed: #{inspect(reason)}")
+        state
+    end
   end
 
   defp get_image_dimensions("/images/" <> key) do
