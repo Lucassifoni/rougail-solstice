@@ -270,7 +270,7 @@ defmodule RougailSolstice.Outline.Detection do
     end
   end
 
-  defp refine_circle_from_inliers(points, r) when length(points) < 3, do: :no_fit
+  defp refine_circle_from_inliers(points, _r) when length(points) < 3, do: :no_fit
 
   defp refine_circle_from_inliers(points, r) do
     {cx, cy} = find_center_for_radius(points, r)
@@ -287,7 +287,7 @@ defmodule RougailSolstice.Outline.Detection do
   end
 
   defp compute_fit_error(points, %{cx: cx, cy: cy, r: r}) do
-    if length(points) == 0 do
+    if points == [] do
       1.0
     else
       points

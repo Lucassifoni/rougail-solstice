@@ -64,6 +64,9 @@ const PreviewCanvas = {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    let offsetX = 0;
+    let offsetY = 0;
+
     if (this.imageLoaded && image.naturalWidth > 0) {
       const scale = Math.min(
         canvas.width / image.naturalWidth,
@@ -71,11 +74,11 @@ const PreviewCanvas = {
       );
       const imgW = image.naturalWidth * scale;
       const imgH = image.naturalHeight * scale;
-      const x = (canvas.width - imgW) / 2;
-      const y = (canvas.height - imgH) / 2;
-      ctx.drawImage(image, x, y, imgW, imgH);
+      offsetX = (canvas.width - imgW) / 2;
+      offsetY = (canvas.height - imgH) / 2;
+      ctx.drawImage(image, offsetX, offsetY, imgW, imgH);
 
-      this.imageOffset = { x, y, scale };
+      this.imageOffset = { x: offsetX, y: offsetY, scale };
     }
 
     if (this.showEdgesOverlay && this.edgesLoaded && edgesImage && edgesImage.naturalWidth > 0) {
@@ -93,19 +96,22 @@ const PreviewCanvas = {
       ctx.globalCompositeOperation = "source-over";
     }
 
+    const drawCx = circle.cx + offsetX;
+    const drawCy = circle.cy + offsetY;
+
     ctx.strokeStyle = "#00ff00";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(circle.cx, circle.cy, circle.r, 0, Math.PI * 2);
+    ctx.arc(drawCx, drawCy, circle.r, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.fillStyle = "#00ff00";
     ctx.beginPath();
-    ctx.arc(circle.cx, circle.cy, 6, 0, Math.PI * 2);
+    ctx.arc(drawCx, drawCy, 6, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(circle.cx + circle.r, circle.cy, 6, 0, Math.PI * 2);
+    ctx.arc(drawCx + circle.r, drawCy, 6, 0, Math.PI * 2);
     ctx.fill();
   },
 
@@ -119,11 +125,20 @@ const PreviewCanvas = {
     };
   },
 
+  toImageSpace(canvasPos) {
+    const offset = this.imageOffset || { x: 0, y: 0 };
+    return {
+      x: canvasPos.x - offset.x,
+      y: canvasPos.y - offset.y
+    };
+  },
+
   onMouseDown(e) {
-    const pos = this.getCanvasCoords(e);
+    const canvasPos = this.getCanvasCoords(e);
+    const imgPos = this.toImageSpace(canvasPos);
     const { cx, cy, r } = this.circle;
 
-    const distToCenter = Math.sqrt((pos.x - cx) ** 2 + (pos.y - cy) ** 2);
+    const distToCenter = Math.sqrt((imgPos.x - cx) ** 2 + (imgPos.y - cy) ** 2);
     const distToEdge = Math.abs(distToCenter - r);
 
     if (distToCenter < 15) {
@@ -136,14 +151,15 @@ const PreviewCanvas = {
   onMouseMove(e) {
     if (!this.dragging) return;
 
-    const pos = this.getCanvasCoords(e);
+    const canvasPos = this.getCanvasCoords(e);
+    const imgPos = this.toImageSpace(canvasPos);
 
     if (this.dragging === "center") {
-      this.circle.cx = Math.round(pos.x);
-      this.circle.cy = Math.round(pos.y);
+      this.circle.cx = Math.round(imgPos.x);
+      this.circle.cy = Math.round(imgPos.y);
     } else if (this.dragging === "radius") {
       const dist = Math.sqrt(
-        (pos.x - this.circle.cx) ** 2 + (pos.y - this.circle.cy) ** 2
+        (imgPos.x - this.circle.cx) ** 2 + (imgPos.y - this.circle.cy) ** 2
       );
       this.circle.r = Math.max(10, Math.round(dist));
     }
