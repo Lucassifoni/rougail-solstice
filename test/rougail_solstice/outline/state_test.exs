@@ -113,7 +113,7 @@ defmodule RougailSolstice.Outline.StateTest do
         circle: %{cx: 320.0, cy: 240.0, r: 200.0},
         confidence: 0.85,
         method: :hough,
-        detected_at: 12345
+        detected_at: 12_345
       }
 
       state =

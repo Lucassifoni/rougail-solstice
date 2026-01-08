@@ -122,28 +122,7 @@ defmodule RougailSolstice.Outline.Server do
 
     if State.ready_for_detection?(server_state.state) do
       Logger.info("[OutlineServer] Running detection pipeline...")
-
-      case run_detection_pipeline(server_state.state) do
-        {:ok, result} ->
-          Logger.info(
-            "[OutlineServer] Circle detected: cx=#{round(result.circle.cx)}, cy=#{round(result.circle.cy)}, r=#{round(result.circle.r)} (confidence: #{Float.round(result.confidence, 2)}, method: #{result.method})"
-          )
-
-          update_interferometry_circle(result.circle)
-
-          new_state =
-            State.set_detection(server_state.state, Map.put(result, :detected_at, now()))
-
-          {:noreply, %{server_state | state: new_state, last_process_time: now()}}
-
-        {:error, reason} ->
-          unless State.should_suppress_logging?(server_state.state) do
-            Logger.debug("[OutlineServer] Detection failed: #{inspect(reason)}")
-          end
-
-          new_state = State.record_failure(server_state.state)
-          {:noreply, %{server_state | state: new_state}}
-      end
+      handle_detection_result(run_detection_pipeline(server_state.state), server_state)
     else
       {:noreply, server_state}
     end
@@ -151,6 +130,25 @@ defmodule RougailSolstice.Outline.Server do
 
   def handle_info(_msg, server_state) do
     {:noreply, server_state}
+  end
+
+  defp handle_detection_result({:ok, result}, server_state) do
+    Logger.info(
+      "[OutlineServer] Circle detected: cx=#{round(result.circle.cx)}, cy=#{round(result.circle.cy)}, r=#{round(result.circle.r)} (confidence: #{Float.round(result.confidence, 2)}, method: #{result.method})"
+    )
+
+    update_interferometry_circle(result.circle)
+    new_state = State.set_detection(server_state.state, Map.put(result, :detected_at, now()))
+    {:noreply, %{server_state | state: new_state, last_process_time: now()}}
+  end
+
+  defp handle_detection_result({:error, reason}, server_state) do
+    unless State.should_suppress_logging?(server_state.state) do
+      Logger.debug("[OutlineServer] Detection failed: #{inspect(reason)}")
+    end
+
+    new_state = State.record_failure(server_state.state)
+    {:noreply, %{server_state | state: new_state}}
   end
 
   defp maybe_capture_frame(server_state, interf_state) do

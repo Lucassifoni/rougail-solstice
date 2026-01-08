@@ -8,9 +8,9 @@ defmodule RougailSolstice.Commands do
   defaulting to the global servers for production use.
   """
 
-  alias RougailSolstice.Robot.Server, as: RobotServer
   alias RougailSolstice.Interferometry.Server, as: InterfServer
   alias RougailSolstice.Outline.Server, as: OutlineServer
+  alias RougailSolstice.Robot.Server, as: RobotServer
 
   @type result :: {:ok, term()} | {:error, term()}
 

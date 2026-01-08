@@ -14,7 +14,7 @@ defmodule RougailSolstice.Interferometry.Server do
 
   @pubsub RougailSolstice.PubSub
   @topic "interferometry:state"
-  @preview_interval 500
+  @preview_interval 100
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)

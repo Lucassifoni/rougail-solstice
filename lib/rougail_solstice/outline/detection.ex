@@ -59,9 +59,9 @@ defmodule RougailSolstice.Outline.Detection do
          _ = debug_save && save_debug_image(hd(mats), "01_input_raw"),
          normalized_mats = normalize_histograms(mats),
          _ = debug_save && save_debug_image(hd(normalized_mats), "01_input_normalized"),
-         {:ok, variance_map} <- compute_variance_map(normalized_mats),
-         _ = debug_save && save_variance_image(variance_map, "02_variance"),
-         variance_u8 = variance_to_u8(variance_map) do
+         {:ok, variance_map} <- compute_variance_map(normalized_mats) do
+      if debug_save, do: save_variance_image(variance_map, "02_variance")
+      variance_u8 = variance_to_u8(variance_map)
       results = run_all_strategies(variance_map, variance_u8, {width, height}, params)
 
       case select_best_result(results, min_confidence) do
@@ -144,18 +144,8 @@ defmodule RougailSolstice.Outline.Detection do
       {consensus_circle, inlier_points} = find_consensus_circle(circles, points, inlier_ratio)
 
       {final_circle, final_inliers} =
-        Enum.reduce(1..ransac_iterations, {consensus_circle, inlier_points}, fn
-          _, {circle, _inliers} ->
-            new_inliers = filter_inliers(points, circle, inlier_ratio)
-
-            if length(new_inliers) >= 3 do
-              case refine_circle_from_inliers(new_inliers, circle.r) do
-                {:ok, new_circle} -> {new_circle, new_inliers}
-                :no_fit -> {circle, new_inliers}
-              end
-            else
-              {circle, new_inliers}
-            end
+        Enum.reduce(1..ransac_iterations, {consensus_circle, inlier_points}, fn _, acc ->
+          refine_iteration(points, acc, inlier_ratio)
         end)
 
       fit_error = compute_fit_error(final_inliers, final_circle)
@@ -166,6 +156,20 @@ defmodule RougailSolstice.Outline.Detection do
       )
 
       {:ok, final_circle, fit_error}
+    end
+  end
+
+  defp refine_iteration(points, {circle, _inliers}, inlier_ratio) do
+    new_inliers = filter_inliers(points, circle, inlier_ratio)
+    maybe_refine_circle(circle, new_inliers)
+  end
+
+  defp maybe_refine_circle(circle, inliers) when length(inliers) < 3, do: {circle, inliers}
+
+  defp maybe_refine_circle(circle, inliers) do
+    case refine_circle_from_inliers(inliers, circle.r) do
+      {:ok, new_circle} -> {new_circle, inliers}
+      :no_fit -> {circle, inliers}
     end
   end
 

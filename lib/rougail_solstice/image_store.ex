@@ -1,4 +1,8 @@
 defmodule RougailSolstice.ImageStore do
+  @moduledoc """
+  In-memory store for image binaries with metadata.
+  """
+
   use Agent
 
   @type entry :: %{
