@@ -62,8 +62,8 @@ defmodule RougailSolsticeWeb.Layouts do
       </div>
     </header>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
+    <main class="px-4 py-8 sm:px-6 lg:px-8">
+      <div class="w-full">
         {render_slot(@inner_block)}
       </div>
     </main>

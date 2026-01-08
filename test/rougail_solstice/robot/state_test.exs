@@ -117,7 +117,8 @@ defmodule RougailSolstice.Robot.StateTest do
       assert {:ok, updated, capture} = State.take_picture(state)
       assert %Capture{} = capture
       assert capture.position == %{x: 500, y: 500, z: 0}
-      assert capture.image_path in CameraAdapter.Virtual.preset_images()
+      assert capture.image_path =~ ~r/virtual_capture_\d+\.jpg$/
+      assert File.exists?(capture.image_path)
       assert updated.camera.last_capture == capture
     end
 

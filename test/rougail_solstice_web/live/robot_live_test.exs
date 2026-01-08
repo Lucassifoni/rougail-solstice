@@ -68,11 +68,11 @@ defmodule RougailSolsticeWeb.RobotLiveTest do
       {:ok, view, _html} = live(conn, ~p"/robot")
 
       view |> element("button", "Lock") |> render_click()
-      view |> element("button", "Capture") |> render_click()
+      view |> element("button[phx-click=take_picture]", "Capture") |> render_click()
 
       html = render(view)
       assert html =~ "Last Capture"
-      assert html =~ "preset_"
+      assert html =~ "virtual_capture_"
     end
 
     test "release returns to idle", %{conn: conn} do

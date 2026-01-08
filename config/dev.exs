@@ -1,5 +1,10 @@
 import Config
 
+# Use Docker for dftfringe-cli on macOS (no native build available)
+if :os.type() == {:unix, :darwin} do
+  config :rougail_solstice, RougailSolstice.Interferometry.CLI, mode: :docker
+end
+
 # Configure your database
 config :rougail_solstice, RougailSolstice.Repo,
   database: Path.expand("../rougail_solstice_dev.db", __DIR__),

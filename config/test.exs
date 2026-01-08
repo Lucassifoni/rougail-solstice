@@ -1,5 +1,8 @@
 import Config
 
+# Use mock mode for CLI (no actual dftfringe-cli binary needed)
+config :rougail_solstice, RougailSolstice.Interferometry.CLI, mode: :mock
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used

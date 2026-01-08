@@ -15,6 +15,7 @@ defmodule RougailSolstice.Application do
       {DNSCluster, query: Application.get_env(:rougail_solstice, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: RougailSolstice.PubSub},
       RougailSolstice.Robot.Server,
+      RougailSolstice.Interferometry.Server,
       RougailSolsticeWeb.Endpoint
     ]
 

@@ -5,7 +5,10 @@
       "Bash(find:*)",
       "Bash(tree:*)",
       "Bash(cat:*)",
-      "Bash(mix test:*)"
+      "Bash(mix test:*)",
+      "Bash(./bin/ci:*)",
+      "Bash(mix format:*)",
+      "Bash(mix compile:*)"
     ]
   }
 }

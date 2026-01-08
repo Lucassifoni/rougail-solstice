@@ -11,6 +11,15 @@ config :rougail_solstice,
   ecto_repos: [RougailSolstice.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# Interferometry CLI configuration
+# mode: :native | :docker
+# native: calls dftfringe-cli directly (must be in PATH)
+# docker: calls via docker run (image must be built)
+config :rougail_solstice, RougailSolstice.Interferometry.CLI,
+  mode: :native,
+  docker_image: "dftfringe-cli:latest",
+  docker_mount_dir: "/data"
+
 # Configures the endpoint
 config :rougail_solstice, RougailSolsticeWeb.Endpoint,
   url: [host: "localhost"],
