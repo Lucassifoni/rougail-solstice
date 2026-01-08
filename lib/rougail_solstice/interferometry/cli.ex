@@ -55,10 +55,13 @@ defmodule RougailSolstice.Interferometry.CLI do
 
   defp run_dft_preview_native(input_path, circle, output_path) do
     args = [
-      "--input", input_path,
-      "--circle", format_circle(circle),
+      "--input",
+      input_path,
+      "--circle",
+      format_circle(circle),
       "--dft-preview",
-      "--dft-output", output_path
+      "--dft-output",
+      output_path
     ]
 
     case System.cmd("dftfringe-cli", args, stderr_to_stdout: true) do
@@ -82,10 +85,13 @@ defmodule RougailSolstice.Interferometry.CLI do
       container_output = Path.join(docker_mount_dir(), output_basename)
 
       args = [
-        "--input", container_input,
-        "--circle", format_circle(circle),
+        "--input",
+        container_input,
+        "--circle",
+        format_circle(circle),
         "--dft-preview",
-        "--dft-output", container_output
+        "--dft-output",
+        container_output
       ]
 
       docker_args =
@@ -176,7 +182,15 @@ defmodule RougailSolstice.Interferometry.CLI do
       container_wft = Path.join(docker_mount_dir(), wft_basename)
       container_csv = Path.join(docker_mount_dir(), csv_basename)
 
-      args = build_analyze_args(container_input, circle, params, center_filter, container_wft, container_csv)
+      args =
+        build_analyze_args(
+          container_input,
+          circle,
+          params,
+          center_filter,
+          container_wft,
+          container_csv
+        )
 
       docker_args =
         ["run", "--rm", "-v", "#{staging_dir}:#{docker_mount_dir()}", docker_image()] ++ args
@@ -199,7 +213,10 @@ defmodule RougailSolstice.Interferometry.CLI do
               |> Map.put(:wft_path, if(File.exists?(wft_path), do: wft_path))
               |> Map.put(:csv_path, if(File.exists?(csv_path), do: csv_path))
 
-            Logger.info("[CLI] Parsed result: rms=#{result.rms_waves}, pv=#{result.pv_waves}, strehl=#{result.strehl}")
+            Logger.info(
+              "[CLI] Parsed result: rms=#{result.rms_waves}, pv=#{result.pv_waves}, strehl=#{result.strehl}"
+            )
+
             {:ok, result}
           end
 
