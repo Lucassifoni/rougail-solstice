@@ -60,17 +60,20 @@ defmodule RougailSolstice.Interferometry.WFTTest do
   describe "render_to_png/2" do
     test "renders sample WFT to PNG" do
       assert {:ok, wft} = WFT.parse_file(@sample_wft_path)
-      assert {:ok, png_binary} = WFT.render_to_png(wft, size: 256)
+      assert {:ok, png_binary, metadata} = WFT.render_to_png(wft, size: 256)
 
       assert is_binary(png_binary)
       assert byte_size(png_binary) > 1000
-
       assert <<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A, _rest::binary>> = png_binary
+
+      assert is_float(metadata.min)
+      assert is_float(metadata.max)
+      assert metadata.max > metadata.min
     end
 
     test "renders with custom size" do
       assert {:ok, wft} = WFT.parse_file(@sample_wft_path)
-      assert {:ok, png_binary} = WFT.render_to_png(wft, size: 128)
+      assert {:ok, png_binary, _metadata} = WFT.render_to_png(wft, size: 128)
 
       assert is_binary(png_binary)
     end

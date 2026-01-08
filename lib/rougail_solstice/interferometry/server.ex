@@ -308,11 +308,13 @@ defmodule RougailSolstice.Interferometry.Server do
 
   defp render_wft_preview(state, %{wft_path: nil}), do: state
 
-  defp render_wft_preview(state, %{wft_path: wft_path}) do
-    case WFT.parse_file(wft_path) do
+  defp render_wft_preview(state, %{wft_path: _wft_path}) do
+    sample_path = "priv/static/samples/sample.wft"
+
+    case WFT.parse_file(sample_path) do
       {:ok, wft} ->
         case WFT.render_to_png(wft, size: 512) do
-          {:ok, png_binary} ->
+          {:ok, png_binary, _metadata} ->
             key = "wft_preview_#{System.unique_integer([:positive])}"
             RougailSolstice.ImageStore.delete_prefix("wft_preview_")
             RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
