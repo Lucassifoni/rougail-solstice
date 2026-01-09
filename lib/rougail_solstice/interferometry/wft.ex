@@ -29,10 +29,11 @@ defmodule RougailSolstice.Interferometry.WFT do
           min: float(),
           max: float(),
           mean: float(),
-          std: float()
+          std: float(),
+          ref_mean: float(),
+          ref_std: float()
         }
 
-  @output_lambda 550.0
   @num_zernike_terms 9
 
   @spec parse_file(Path.t(), keyword()) :: {:ok, wavefront()} | {:error, term()}
@@ -46,6 +47,7 @@ defmodule RougailSolstice.Interferometry.WFT do
   @spec parse(String.t(), keyword()) :: {:ok, wavefront()} | {:error, term()}
   def parse(content, opts \\ []) do
     apply_null = Keyword.get(opts, :apply_null, true)
+    conic = Keyword.get(opts, :conic, -1.0)
     lines = String.split(content, "\n", trim: true)
 
     with {:ok, width, height, rest} <- parse_dimensions(lines),
@@ -53,11 +55,17 @@ defmodule RougailSolstice.Interferometry.WFT do
          metadata <- parse_metadata(metadata_lines, width, height) do
       outside = metadata[:outside] || default_outside(width, height)
 
-      final_data =
+      software_null = compute_software_null(metadata[:diameter], metadata[:roc], metadata[:lambda], conic)
+      Logger.info("[WFT] Software null: #{software_null} (D=#{metadata[:diameter]}, ROC=#{metadata[:roc]}, λ=#{metadata[:lambda]}, conic=#{conic})")
+
+      {final_data, ref_mean, ref_std} =
         if apply_null do
-          apply_zernike_null(data, mask, outside)
+          {nulled_data, reference_surface} = apply_zernike_null(data, mask, outside, software_null)
+          {_ref_min, _ref_max, ref_mean, ref_std} = compute_statistics(reference_surface, mask)
+          {nulled_data, ref_mean, ref_std}
         else
-          data
+          {_min, _max, mean, std} = compute_statistics(data, mask)
+          {data, mean, std}
         end
 
       {min, max, mean, std} = compute_statistics(final_data, mask)
@@ -76,7 +84,9 @@ defmodule RougailSolstice.Interferometry.WFT do
          min: min,
          max: max,
          mean: mean,
-         std: std
+         std: std,
+         ref_mean: ref_mean,
+         ref_std: ref_std
        }}
     end
   rescue
@@ -226,10 +236,60 @@ defmodule RougailSolstice.Interferometry.WFT do
     val
   end
 
-  defp apply_zernike_null(data, mask, outside) do
+  defp compute_software_null(nil, _roc, _lambda, _conic), do: 0.0
+  defp compute_software_null(_diameter, nil, _lambda, _conic), do: 0.0
+  defp compute_software_null(_diameter, _roc, nil, _conic), do: 0.0
+  defp compute_software_null(_diameter, _roc, _lambda, 0.0), do: 0.0
+  defp compute_software_null(diameter, roc, lambda, conic) do
+    z8_computed = :math.pow(diameter, 4) * 1_000_000.0 / (384.0 * :math.pow(roc, 3) * lambda)
+    z8_computed * conic
+  end
+
+  defp apply_zernike_null(data, mask, outside, software_null) do
     coefficients = fit_zernikes(data, mask, outside, @num_zernike_terms)
     enables = default_null_enables()
-    subtract_zernikes(data, mask, outside, coefficients, enables)
+    nulled_data = subtract_zernikes(data, mask, outside, coefficients, enables, software_null)
+    reference_surface = reconstruct_reference_surface(mask, outside, coefficients, enables, software_null)
+    {nulled_data, reference_surface}
+  end
+
+  defp reconstruct_reference_surface(mask, outside, coefficients, enables, software_null) do
+    cx = outside.cx
+    cy = outside.cy
+    radius = outside.rx
+
+    for {mask_row, y} <- Enum.with_index(mask) do
+      for {m, x} <- Enum.with_index(mask_row) do
+        if m != 255 do
+          0.0
+        else
+          ux = (x - cx) / radius
+          uy = (y - cy) / radius
+          rho = :math.sqrt(ux * ux + uy * uy)
+
+          if rho > 1.0 do
+            0.0
+          else
+            theta = :math.atan2(uy, ux)
+            zerns = zernike_terms(rho, theta, length(coefficients))
+
+            base_contribution =
+              coefficients
+              |> Enum.with_index()
+              |> Enum.reduce(0.0, fn {coef, i}, acc ->
+                if not Map.get(enables, i, false) do
+                  acc + coef * Enum.at(zerns, i)
+                else
+                  acc
+                end
+              end)
+
+            z8_term = Enum.at(zerns, 8)
+            base_contribution - software_null * z8_term
+          end
+        end
+      end
+    end
   end
 
   defp default_null_enables do
@@ -373,7 +433,7 @@ defmodule RougailSolstice.Interferometry.WFT do
     aug |> List.replace_at(i, row_j) |> List.replace_at(j, row_i)
   end
 
-  defp subtract_zernikes(data, mask, outside, coefficients, enables) do
+  defp subtract_zernikes(data, mask, outside, coefficients, enables, software_null) do
     cx = outside.cx
     cy = outside.cy
     radius = outside.rx
@@ -408,7 +468,8 @@ defmodule RougailSolstice.Interferometry.WFT do
                 end
               end)
 
-            val - zern_contribution
+            z8_term = Enum.at(zerns, 8)
+            val - zern_contribution - software_null * z8_term
           end
         end
       end
@@ -471,10 +532,7 @@ defmodule RougailSolstice.Interferometry.WFT do
 
   @spec render_to_png(wavefront(), keyword()) :: {:ok, binary(), map()} | {:error, term()}
   def render_to_png(wft, _opts \\ []) do
-    lambda = wft.lambda || @output_lambda
-    lambda_scale = lambda / @output_lambda
-
-    {z_min, z_max} = compute_z_range(wft.mean, wft.std)
+    {z_min, z_max} = compute_z_range(wft.ref_mean, wft.ref_std)
     z_range = max(z_max - z_min, 1.0e-10)
 
     height = wft.height
@@ -489,8 +547,7 @@ defmodule RougailSolstice.Interferometry.WFT do
           if m != 255 do
             <<0, 0, 0>>
           else
-            scaled_val = val * lambda_scale
-            t = clamp((scaled_val - z_min) / z_range, 0.0, 1.0)
+            t = clamp((val - z_min) / z_range, 0.0, 1.0)
             hotcold_to_bgr(t)
           end
         end)
@@ -524,7 +581,8 @@ defmodule RougailSolstice.Interferometry.WFT do
     {0.50, {150, 60, 0}},
     {0.75, {160, 160, 160}},
     {0.90, {255, 0, 0}},
-    {0.99, {255, 255, 0}}
+    {0.99, {255, 255, 0}},
+    {1.00, {255, 255, 255}}
   ]
 
   defp hotcold_to_bgr(t) do

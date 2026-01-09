@@ -312,7 +312,10 @@ defmodule RougailSolstice.Interferometry.Server do
     else
       Logger.info("[InterfServer] render_wft_preview using: #{wft_path}")
 
-      case WFT.parse_file(wft_path, apply_null: true) do
+      conic = state.optical_params[:conic] || -1.0
+      Logger.info("[InterfServer] Rendering WFT with conic=#{conic}")
+
+      case WFT.parse_file(wft_path, apply_null: true, conic: conic) do
         {:ok, wft} ->
           case WFT.render_to_png(wft) do
             {:ok, png_binary, metadata} ->
