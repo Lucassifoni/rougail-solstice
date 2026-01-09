@@ -55,12 +55,18 @@ defmodule RougailSolstice.Interferometry.WFT do
          metadata <- parse_metadata(metadata_lines, width, height) do
       outside = metadata[:outside] || default_outside(width, height)
 
-      software_null = compute_software_null(metadata[:diameter], metadata[:roc], metadata[:lambda], conic)
-      Logger.info("[WFT] Software null: #{software_null} (D=#{metadata[:diameter]}, ROC=#{metadata[:roc]}, λ=#{metadata[:lambda]}, conic=#{conic})")
+      software_null =
+        compute_software_null(metadata[:diameter], metadata[:roc], metadata[:lambda], conic)
+
+      Logger.info(
+        "[WFT] Software null: #{software_null} (D=#{metadata[:diameter]}, ROC=#{metadata[:roc]}, λ=#{metadata[:lambda]}, conic=#{conic})"
+      )
 
       {final_data, ref_mean, ref_std} =
         if apply_null do
-          {nulled_data, reference_surface} = apply_zernike_null(data, mask, outside, software_null)
+          {nulled_data, reference_surface} =
+            apply_zernike_null(data, mask, outside, software_null)
+
           {_ref_min, _ref_max, ref_mean, ref_std} = compute_statistics(reference_surface, mask)
           {nulled_data, ref_mean, ref_std}
         else
@@ -159,8 +165,16 @@ defmodule RougailSolstice.Interferometry.WFT do
       cond do
         String.starts_with?(line, "outside") ->
           case parse_ellipse_line(line) do
-            {:ok, ellipse} -> Map.put(acc, :outside, ellipse)
-            _ -> Map.put(acc, :outside, %{cx: default_cx, cy: default_cy, rx: default_r, ry: default_r})
+            {:ok, ellipse} ->
+              Map.put(acc, :outside, ellipse)
+
+            _ ->
+              Map.put(acc, :outside, %{
+                cx: default_cx,
+                cy: default_cy,
+                rx: default_r,
+                ry: default_r
+              })
           end
 
         String.starts_with?(line, "obstruction") ->
@@ -240,6 +254,7 @@ defmodule RougailSolstice.Interferometry.WFT do
   defp compute_software_null(_diameter, nil, _lambda, _conic), do: 0.0
   defp compute_software_null(_diameter, _roc, nil, _conic), do: 0.0
   defp compute_software_null(_diameter, _roc, _lambda, 0.0), do: 0.0
+
   defp compute_software_null(diameter, roc, lambda, conic) do
     z8_computed = :math.pow(diameter, 4) * 1_000_000.0 / (384.0 * :math.pow(roc, 3) * lambda)
     z8_computed * conic
@@ -249,7 +264,10 @@ defmodule RougailSolstice.Interferometry.WFT do
     coefficients = fit_zernikes(data, mask, outside, @num_zernike_terms)
     enables = default_null_enables()
     nulled_data = subtract_zernikes(data, mask, outside, coefficients, enables, software_null)
-    reference_surface = reconstruct_reference_surface(mask, outside, coefficients, enables, software_null)
+
+    reference_surface =
+      reconstruct_reference_surface(mask, outside, coefficients, enables, software_null)
+
     {nulled_data, reference_surface}
   end
 
@@ -340,19 +358,21 @@ defmodule RougailSolstice.Interferometry.WFT do
   end
 
   defp solve_least_squares(samples, num_terms) do
-    ata = for i <- 0..(num_terms - 1) do
-      for j <- 0..(num_terms - 1) do
-        Enum.reduce(samples, 0.0, fn {zerns, _val}, acc ->
-          acc + Enum.at(zerns, i) * Enum.at(zerns, j)
+    ata =
+      for i <- 0..(num_terms - 1) do
+        for j <- 0..(num_terms - 1) do
+          Enum.reduce(samples, 0.0, fn {zerns, _val}, acc ->
+            acc + Enum.at(zerns, i) * Enum.at(zerns, j)
+          end)
+        end
+      end
+
+    atb =
+      for i <- 0..(num_terms - 1) do
+        Enum.reduce(samples, 0.0, fn {zerns, val}, acc ->
+          acc + Enum.at(zerns, i) * val
         end)
       end
-    end
-
-    atb = for i <- 0..(num_terms - 1) do
-      Enum.reduce(samples, 0.0, fn {zerns, val}, acc ->
-        acc + Enum.at(zerns, i) * val
-      end)
-    end
 
     solve_linear_system(ata, atb)
   end
@@ -427,6 +447,7 @@ defmodule RougailSolstice.Interferometry.WFT do
   defp get_aug(aug, row, col), do: Enum.at(Enum.at(aug, row), col)
 
   defp swap_rows(aug, i, j) when i == j, do: aug
+
   defp swap_rows(aug, i, j) do
     row_i = Enum.at(aug, i)
     row_j = Enum.at(aug, j)
@@ -558,9 +579,16 @@ defmodule RougailSolstice.Interferometry.WFT do
     mat = Evision.Mat.from_binary(rgb_binary, :u8, height, width, 3)
 
     case Evision.imencode(".png", mat) do
-      {:ok, binary} -> {:ok, binary, %{min: z_min, max: z_max, mean: wft.mean, std: wft.std, width: width, height: height}}
-      binary when is_binary(binary) -> {:ok, binary, %{min: z_min, max: z_max, mean: wft.mean, std: wft.std, width: width, height: height}}
-      error -> {:error, {:encode_failed, error}}
+      {:ok, binary} ->
+        {:ok, binary,
+         %{min: z_min, max: z_max, mean: wft.mean, std: wft.std, width: width, height: height}}
+
+      binary when is_binary(binary) ->
+        {:ok, binary,
+         %{min: z_min, max: z_max, mean: wft.mean, std: wft.std, width: width, height: height}}
+
+      error ->
+        {:error, {:encode_failed, error}}
     end
   rescue
     e ->
