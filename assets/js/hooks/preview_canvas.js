@@ -1,5 +1,8 @@
+import { initFullscreenPreview, triggerFullscreen } from "./fullscreen_preview";
+
 const PreviewCanvas = {
   mounted() {
+    initFullscreenPreview(this);
     console.log("[PreviewCanvas] mounted");
     this.canvas = this.el.querySelector("canvas");
     this.ctx = this.canvas.getContext("2d");
@@ -57,6 +60,9 @@ const PreviewCanvas = {
         console.error("[PreviewCanvas] error in update_edges_overlay", e);
       }
     });
+
+    this._onOutlineAdjusted = () => triggerFullscreen(this);
+    window.addEventListener("outline-adjusted", this._onOutlineAdjusted);
   },
 
   draw() {
@@ -99,19 +105,23 @@ const PreviewCanvas = {
     const drawCx = circle.cx + offsetX;
     const drawCy = circle.cy + offsetY;
 
+    const isFullscreen = this.el.classList.contains("canvas-fullscreen-overlay");
+    const lineWidth = isFullscreen ? 1 : 2;
+    const handleSize = isFullscreen ? 3 : 6;
+
     ctx.strokeStyle = "#00ff00";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = lineWidth;
     ctx.beginPath();
     ctx.arc(drawCx, drawCy, circle.r, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.fillStyle = "#00ff00";
     ctx.beginPath();
-    ctx.arc(drawCx, drawCy, 6, 0, Math.PI * 2);
+    ctx.arc(drawCx, drawCy, handleSize, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(drawCx + circle.r, drawCy, 6, 0, Math.PI * 2);
+    ctx.arc(drawCx + circle.r, drawCy, handleSize, 0, Math.PI * 2);
     ctx.fill();
   },
 
@@ -143,8 +153,10 @@ const PreviewCanvas = {
 
     if (distToCenter < 15) {
       this.dragging = "center";
+      triggerFullscreen(this);
     } else if (distToEdge < 15) {
       this.dragging = "radius";
+      triggerFullscreen(this);
     }
   },
 
@@ -188,6 +200,7 @@ const PreviewCanvas = {
     this.canvas.removeEventListener("mousemove", this.onMouseMove);
     this.canvas.removeEventListener("mouseup", this.onMouseUp);
     this.canvas.removeEventListener("mouseleave", this.onMouseUp);
+    window.removeEventListener("outline-adjusted", this._onOutlineAdjusted);
   }
 };
 

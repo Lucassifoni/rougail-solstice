@@ -123,6 +123,7 @@ const Gamepad = {
       gamepad.buttons[BUTTON.DPAD_UP],
       () => {
         this.channel.push("adjust_outline_position", { dx: 0, dy: -5 });
+        window.dispatchEvent(new CustomEvent("outline-adjusted"));
       },
       DPAD_REPEAT_DELAY
     );
@@ -133,6 +134,7 @@ const Gamepad = {
       gamepad.buttons[BUTTON.DPAD_DOWN],
       () => {
         this.channel.push("adjust_outline_position", { dx: 0, dy: 5 });
+        window.dispatchEvent(new CustomEvent("outline-adjusted"));
       },
       DPAD_REPEAT_DELAY
     );
@@ -143,6 +145,7 @@ const Gamepad = {
       gamepad.buttons[BUTTON.DPAD_LEFT],
       () => {
         this.channel.push("adjust_outline_position", { dx: -5, dy: 0 });
+        window.dispatchEvent(new CustomEvent("outline-adjusted"));
       },
       DPAD_REPEAT_DELAY
     );
@@ -153,6 +156,7 @@ const Gamepad = {
       gamepad.buttons[BUTTON.DPAD_RIGHT],
       () => {
         this.channel.push("adjust_outline_position", { dx: 5, dy: 0 });
+        window.dispatchEvent(new CustomEvent("outline-adjusted"));
       },
       DPAD_REPEAT_DELAY
     );
@@ -163,6 +167,7 @@ const Gamepad = {
       gamepad.buttons[BUTTON.L],
       () => {
         this.channel.push("adjust_outline_radius", { delta: -5 });
+        window.dispatchEvent(new CustomEvent("outline-adjusted"));
       },
       BUTTON_REPEAT_DELAY
     );
@@ -173,6 +178,7 @@ const Gamepad = {
       gamepad.buttons[BUTTON.R],
       () => {
         this.channel.push("adjust_outline_radius", { delta: 5 });
+        window.dispatchEvent(new CustomEvent("outline-adjusted"));
       },
       BUTTON_REPEAT_DELAY
     );
@@ -194,6 +200,7 @@ const Gamepad = {
         this.channel.push("adjust_center_filter_radius", {
           delta: filterDelta,
         });
+        window.dispatchEvent(new CustomEvent("center-filter-adjusted"));
       }
     );
   },

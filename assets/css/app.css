@@ -103,3 +103,25 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+.canvas-fullscreen-overlay {
+  position: fixed !important;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+  transition: opacity 0.2s ease-out;
+}
+
+.canvas-fullscreen-overlay canvas {
+  width: 95vw !important;
+  height: 95vh !important;
+  object-fit: contain;
+}
+
+.canvas-fullscreen-overlay.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}

@@ -263,6 +263,8 @@ defmodule RougailSolstice.Interferometry.CLI do
   end
 
   defp build_analyze_args(input, circle, params, center_filter, wft_path, csv_path) do
+    png_path = String.replace_suffix(wft_path, ".wft", "_wavefront.png")
+
     base = [
       "--input",
       input,
@@ -278,11 +280,15 @@ defmodule RougailSolstice.Interferometry.CLI do
       to_string(params.conic),
       "--center-filter",
       to_string(center_filter),
+      "--zernike-terms",
+      "48",
       "--structured-output",
       "--output",
       wft_path,
       "--zernikes",
-      csv_path
+      csv_path,
+      "--wavefront-png",
+      png_path
     ]
 
     if params[:obstruction] && params.obstruction > 0 do

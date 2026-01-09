@@ -1,5 +1,8 @@
+import { initFullscreenPreview, triggerFullscreen } from "./fullscreen_preview";
+
 const DftCanvas = {
   mounted() {
+    initFullscreenPreview(this);
     this.canvas = this.el.querySelector("canvas");
     this.ctx = this.canvas.getContext("2d");
     this.image = new Image();
@@ -25,6 +28,9 @@ const DftCanvas = {
       this.radius = radius;
       this.draw();
     });
+
+    this._onCenterFilterAdjusted = () => triggerFullscreen(this);
+    window.addEventListener("center-filter-adjusted", this._onCenterFilterAdjusted);
   },
 
   draw() {
@@ -46,15 +52,19 @@ const DftCanvas = {
       ctx.drawImage(image, x, y, imgW, imgH);
     }
 
+    const isFullscreen = this.el.classList.contains("canvas-fullscreen-overlay");
+    const lineWidth = isFullscreen ? 1 : 2;
+    const handleSize = isFullscreen ? 3 : 6;
+
     ctx.strokeStyle = "#ff0000";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = lineWidth;
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
     ctx.stroke();
 
     ctx.fillStyle = "#ff0000";
     ctx.beginPath();
-    ctx.arc(centerX + radius, centerY, 6, 0, Math.PI * 2);
+    ctx.arc(centerX + radius, centerY, handleSize, 0, Math.PI * 2);
     ctx.fill();
   },
 
@@ -78,6 +88,7 @@ const DftCanvas = {
 
     if (distToEdge < 15) {
       this.dragging = true;
+      triggerFullscreen(this);
     }
   },
 
@@ -111,6 +122,7 @@ const DftCanvas = {
     this.canvas.removeEventListener("mousemove", this.onMouseMove);
     this.canvas.removeEventListener("mouseup", this.onMouseUp);
     this.canvas.removeEventListener("mouseleave", this.onMouseUp);
+    window.removeEventListener("center-filter-adjusted", this._onCenterFilterAdjusted);
   }
 };
 

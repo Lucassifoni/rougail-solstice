@@ -94,7 +94,6 @@ defmodule RougailSolstice.Interferometry.Server do
     case State.set_center_filter_radius(state, radius) do
       {:ok, new_state} ->
         broadcast(new_state)
-        maybe_rerun_analysis(new_state)
         {:reply, {:ok, new_state}, new_state}
 
       {:error, _} = error ->
@@ -181,11 +180,6 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
-  def handle_info(:run_analysis, state) do
-    new_state = run_analysis_if_ready(state)
-    {:noreply, new_state}
-  end
-
   defp capture_and_process_preview(state) do
     robot_state = RobotServer.get_state()
 
@@ -258,14 +252,11 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
-  defp maybe_rerun_analysis(state) do
-    if State.ready_for_analysis?(state) do
-      send(self(), :run_analysis)
-    end
-  end
-
   defp run_analysis_if_ready(state) do
-    with true <- State.ready_for_analysis?(state),
+    ready = State.ready_for_analysis?(state)
+    Logger.info("[InterfServer] run_analysis_if_ready: ready=#{ready}")
+
+    with true <- ready,
          {:ok, scaled_circle} <- State.scale_circle_to_full_shot(state) do
       Logger.info("""
       [InterfServer] Running analysis:
@@ -277,8 +268,14 @@ defmodule RougailSolstice.Interferometry.Server do
 
       case run_cli_analysis(state, scaled_circle) do
         {:ok, result} ->
+          Logger.info("[InterfServer] Analysis succeeded, rms=#{result.rms_waves}")
           new_state = State.set_analysis(state, result)
           new_state = render_wft_preview(new_state, result)
+
+          Logger.info(
+            "[InterfServer] After render_wft_preview, wft_preview_path=#{inspect(new_state.wft_preview_path)}"
+          )
+
           broadcast(new_state)
           new_state
 
@@ -306,30 +303,39 @@ defmodule RougailSolstice.Interferometry.Server do
     )
   end
 
-  defp render_wft_preview(state, %{wft_path: nil}), do: state
+  defp render_wft_preview(state, result) do
+    wft_path = result[:wft_path]
 
-  defp render_wft_preview(state, %{wft_path: _wft_path}) do
-    sample_path = "priv/static/samples/sample.wft"
+    if is_nil(wft_path) or not File.exists?(wft_path) do
+      Logger.warning("[InterfServer] No WFT file from analysis: #{inspect(wft_path)}")
+      state
+    else
+      Logger.info("[InterfServer] render_wft_preview using: #{wft_path}")
 
-    case WFT.parse_file(sample_path) do
-      {:ok, wft} ->
-        case WFT.render_to_png(wft, size: 512) do
-          {:ok, png_binary, _metadata} ->
-            key = "wft_preview_#{System.unique_integer([:positive])}"
-            RougailSolstice.ImageStore.delete_prefix("wft_preview_")
-            RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
-            url = RougailSolstice.ImageStore.url(key)
-            Logger.info("[InterfServer] WFT preview rendered: #{url}")
-            State.set_wft_preview(state, url)
+      case WFT.parse_file(wft_path, apply_null: true) do
+        {:ok, wft} ->
+          case WFT.render_to_png(wft) do
+            {:ok, png_binary, metadata} ->
+              key = "wft_preview_#{System.unique_integer([:positive])}"
+              RougailSolstice.ImageStore.delete_prefix("wft_preview_")
+              RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
+              url = RougailSolstice.ImageStore.url(key)
 
-          {:error, reason} ->
-            Logger.warning("[InterfServer] WFT render failed: #{inspect(reason)}")
-            state
-        end
+              Logger.info(
+                "[InterfServer] WFT preview rendered: #{url}, stats: #{inspect(metadata)}"
+              )
 
-      {:error, reason} ->
-        Logger.warning("[InterfServer] WFT parse failed: #{inspect(reason)}")
-        state
+              State.set_wft_preview(state, url)
+
+            {:error, reason} ->
+              Logger.warning("[InterfServer] WFT render failed: #{inspect(reason)}")
+              state
+          end
+
+        {:error, reason} ->
+          Logger.warning("[InterfServer] WFT parse failed: #{inspect(reason)}")
+          state
+      end
     end
   end
 

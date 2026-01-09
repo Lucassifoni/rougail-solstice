@@ -26,7 +26,7 @@ defmodule RougailSolsticeWeb.GamepadChannel do
   end
 
   def handle_in("capture", _params, socket) do
-    Commands.take_picture()
+    Commands.capture_full_shot()
     {:noreply, socket}
   end
 
