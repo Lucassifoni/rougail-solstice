@@ -208,7 +208,7 @@ defmodule RougailSolsticeWeb.RobotLive do
 
     {:noreply,
      socket
-     |> assign(:auto_outline_enabled, not socket.assigns.auto_outline_enabled)
+     |> assign(:auto_outline_enabled, outline_state.enabled)
      |> assign(:outline_state, outline_state)}
   end
 

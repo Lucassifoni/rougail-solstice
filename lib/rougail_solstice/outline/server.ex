@@ -72,7 +72,10 @@ defmodule RougailSolstice.Outline.Server do
   def handle_call(:enable, _from, server_state) do
     new_state = State.enable(server_state.state)
     Logger.info("[OutlineServer] Auto-outline enabled")
-    {:reply, :ok, %{server_state | state: new_state}}
+
+    server_state = %{server_state | state: new_state}
+    server_state = maybe_capture_current_frame(server_state)
+    {:reply, :ok, server_state}
   end
 
   def handle_call(:disable, _from, server_state) do
@@ -273,6 +276,17 @@ defmodule RougailSolstice.Outline.Server do
 
   defp update_interferometry_circle(circle) do
     InterfServer.set_outline_circle(circle)
+  end
+
+  defp maybe_capture_current_frame(server_state) do
+    interf_state = InterfServer.get_state()
+
+    if interf_state.liveview_active do
+      Logger.debug("[OutlineServer] Liveview active, capturing current frame immediately")
+      maybe_capture_frame(server_state, interf_state)
+    else
+      server_state
+    end
   end
 
   defp now, do: System.monotonic_time(:millisecond)

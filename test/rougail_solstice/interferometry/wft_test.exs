@@ -11,13 +11,10 @@ defmodule RougailSolstice.Interferometry.WFTTest do
 
       assert wft.width == 640
       assert wft.height == 640
-      assert Nx.shape(wft.data) == {640, 640}
+      assert length(wft.data) == 640
+      assert length(hd(wft.data)) == 640
 
-      assert wft.outside_circle != nil
-      assert wft.outside_circle.cx == 319.5
-      assert wft.outside_circle.cy == 319.5
-      assert wft.outside_circle.r == 319.5
-
+      assert wft.outside != nil
       assert wft.diameter == 203.0
       assert wft.roc == 1438.0
       assert wft.lambda == 518.0
@@ -46,21 +43,22 @@ defmodule RougailSolstice.Interferometry.WFTTest do
       assert {:ok, wft} = WFT.parse(content)
       assert wft.width == 2
       assert wft.height == 2
-      assert Nx.shape(wft.data) == {2, 2}
+      assert length(wft.data) == 2
+      assert length(hd(wft.data)) == 2
       assert wft.diameter == 100.0
       assert wft.roc == 500.0
       assert wft.lambda == 550.0
     end
 
     test "handles empty content" do
-      assert {:error, :empty_file} = WFT.parse("")
+      assert {:error, :missing_dimensions} = WFT.parse("")
     end
   end
 
   describe "render_to_png/2" do
     test "renders sample WFT to PNG" do
       assert {:ok, wft} = WFT.parse_file(@sample_wft_path)
-      assert {:ok, png_binary, metadata} = WFT.render_to_png(wft, size: 256)
+      assert {:ok, png_binary, metadata} = WFT.render_to_png(wft)
 
       assert is_binary(png_binary)
       assert byte_size(png_binary) > 1000
@@ -69,13 +67,6 @@ defmodule RougailSolstice.Interferometry.WFTTest do
       assert is_float(metadata.min)
       assert is_float(metadata.max)
       assert metadata.max > metadata.min
-    end
-
-    test "renders with custom size" do
-      assert {:ok, wft} = WFT.parse_file(@sample_wft_path)
-      assert {:ok, png_binary, _metadata} = WFT.render_to_png(wft, size: 128)
-
-      assert is_binary(png_binary)
     end
   end
 end

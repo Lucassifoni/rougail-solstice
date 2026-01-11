@@ -10,7 +10,7 @@ defmodule RougailSolstice.Interferometry.Server do
 
   alias RougailSolstice.Interferometry.CLI
   alias RougailSolstice.Interferometry.State
-  alias RougailSolstice.Interferometry.WFT
+  alias RougailSolstice.Interferometry.WFT.Nx, as: WFT
   alias RougailSolstice.Robot.Server, as: RobotServer
 
   @pubsub RougailSolstice.PubSub

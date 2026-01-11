@@ -66,7 +66,8 @@ defmodule RougailSolstice.MixProject do
       {:bandit, "~> 1.5"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:evision, "~> 0.2"},
-      {:exla, "~> 0.9"}
+      {:exla, "~> 0.9"},
+      {:benchee, "~> 1.3", only: :dev}
     ]
   end
 

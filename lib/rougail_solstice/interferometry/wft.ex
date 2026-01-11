@@ -295,10 +295,10 @@ defmodule RougailSolstice.Interferometry.WFT do
               coefficients
               |> Enum.with_index()
               |> Enum.reduce(0.0, fn {coef, i}, acc ->
-                if not Map.get(enables, i, false) do
-                  acc + coef * Enum.at(zerns, i)
-                else
+                if Map.get(enables, i, false) do
                   acc
+                else
+                  acc + coef * Enum.at(zerns, i)
                 end
               end)
 
