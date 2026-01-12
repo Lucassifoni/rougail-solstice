@@ -202,15 +202,19 @@ defmodule RougailSolstice.Interferometry.Server do
 
   defp process_dft_preview(state) do
     if State.ready_for_dft_preview?(state) do
-      with {:ok, input_path} <- resolve_preview_to_file(state.preview_frame_path),
-           dft_output =
-             Path.join(System.tmp_dir!(), "dft_preview_#{System.unique_integer([:positive])}.png"),
-           {:ok, _dft_path} <- CLI.dft_preview(input_path, state.outline_circle, dft_output),
-           {:ok, dft_url} <- store_dft_preview(dft_output) do
-        new_state = State.set_dft_preview(state, dft_url)
-        broadcast(new_state)
-        new_state
-      else
+      result =
+        if CLI.use_sidecar?() do
+          process_dft_preview_sidecar(state)
+        else
+          process_dft_preview_file(state)
+        end
+
+      case result do
+        {:ok, dft_url} ->
+          new_state = State.set_dft_preview(state, dft_url)
+          broadcast(new_state)
+          new_state
+
         {:error, reason} ->
           Logger.warning("[InterfServer] DFT preview failed: #{inspect(reason)}")
           state
@@ -218,6 +222,42 @@ defmodule RougailSolstice.Interferometry.Server do
     else
       state
     end
+  end
+
+  defp process_dft_preview_sidecar(state) do
+    with {:ok, image_binary} <- get_preview_binary(state.preview_frame_path),
+         {:ok, {:binary, png_binary}} <- CLI.dft_preview(image_binary, state.outline_circle) do
+      key = "dft_preview_#{System.unique_integer([:positive])}"
+      RougailSolstice.ImageStore.delete_prefix("dft_preview_")
+      RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
+      {:ok, RougailSolstice.ImageStore.url(key)}
+    end
+  end
+
+  defp process_dft_preview_file(state) do
+    with {:ok, input_path} <- resolve_preview_to_file(state.preview_frame_path),
+         dft_output =
+           Path.join(System.tmp_dir!(), "dft_preview_#{System.unique_integer([:positive])}.png"),
+         {:ok, {:file, dft_path}} <-
+           CLI.dft_preview(input_path, state.outline_circle, dft_output),
+         {:ok, binary} <- File.read(dft_path) do
+      key = "dft_preview_#{System.unique_integer([:positive])}"
+      RougailSolstice.ImageStore.delete_prefix("dft_preview_")
+      RougailSolstice.ImageStore.put(key, binary, content_type: "image/png")
+      File.rm(dft_path)
+      {:ok, RougailSolstice.ImageStore.url(key)}
+    end
+  end
+
+  defp get_preview_binary("/images/" <> key) do
+    case RougailSolstice.ImageStore.get(key) do
+      %{binary: binary} -> {:ok, binary}
+      nil -> {:error, :preview_not_found}
+    end
+  end
+
+  defp get_preview_binary(path) when is_binary(path) do
+    File.read(path)
   end
 
   defp resolve_preview_to_file("/images/" <> key) do
@@ -236,20 +276,6 @@ defmodule RougailSolstice.Interferometry.Server do
 
   defp resolve_preview_to_file(path) when is_binary(path) do
     if File.exists?(path), do: {:ok, path}, else: {:error, :file_not_found}
-  end
-
-  defp store_dft_preview(file_path) do
-    case File.read(file_path) do
-      {:ok, binary} ->
-        key = "dft_preview_#{System.unique_integer([:positive])}"
-        RougailSolstice.ImageStore.delete_prefix("dft_preview_")
-        RougailSolstice.ImageStore.put(key, binary, content_type: "image/png")
-        File.rm(file_path)
-        {:ok, RougailSolstice.ImageStore.url(key)}
-
-      {:error, reason} ->
-        {:error, {:read_failed, reason}}
-    end
   end
 
   defp run_analysis_if_ready(state) do
@@ -304,41 +330,66 @@ defmodule RougailSolstice.Interferometry.Server do
   end
 
   defp render_wft_preview(state, result) do
-    wft_path = result[:wft_path]
+    case result[:wft] do
+      nil ->
+        Logger.warning("[InterfServer] No WFT data from analysis")
+        state
 
-    if is_nil(wft_path) or not File.exists?(wft_path) do
-      Logger.warning("[InterfServer] No WFT file from analysis: #{inspect(wft_path)}")
-      state
-    else
-      Logger.info("[InterfServer] render_wft_preview using: #{wft_path}")
+      {:file, wft_path} ->
+        render_wft_from_file(state, wft_path)
 
+      {:binary, wft_binary} ->
+        render_wft_from_binary(state, wft_binary)
+    end
+  end
+
+  defp render_wft_from_file(state, wft_path) do
+    if File.exists?(wft_path) do
+      Logger.info("[InterfServer] render_wft_preview using file: #{wft_path}")
       conic = state.optical_params[:conic] || -1.0
-      Logger.info("[InterfServer] Rendering WFT with conic=#{conic}")
 
       case WFT.parse_file(wft_path, apply_null: true, conic: conic) do
         {:ok, wft} ->
-          case WFT.render_to_png(wft) do
-            {:ok, png_binary, metadata} ->
-              key = "wft_preview_#{System.unique_integer([:positive])}"
-              RougailSolstice.ImageStore.delete_prefix("wft_preview_")
-              RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
-              url = RougailSolstice.ImageStore.url(key)
-
-              Logger.info(
-                "[InterfServer] WFT preview rendered: #{url}, stats: #{inspect(metadata)}"
-              )
-
-              State.set_wft_preview(state, url)
-
-            {:error, reason} ->
-              Logger.warning("[InterfServer] WFT render failed: #{inspect(reason)}")
-              state
-          end
+          render_wft_to_store(state, wft)
 
         {:error, reason} ->
           Logger.warning("[InterfServer] WFT parse failed: #{inspect(reason)}")
           state
       end
+    else
+      Logger.warning("[InterfServer] WFT file not found: #{wft_path}")
+      state
+    end
+  end
+
+  defp render_wft_from_binary(state, wft_binary) do
+    Logger.info("[InterfServer] render_wft_preview using binary data")
+    conic = state.optical_params[:conic] || -1.0
+
+    case WFT.parse(wft_binary, apply_null: true, conic: conic) do
+      {:ok, wft} ->
+        render_wft_to_store(state, wft)
+
+      {:error, reason} ->
+        Logger.warning("[InterfServer] WFT parse failed: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp render_wft_to_store(state, wft) do
+    case WFT.render_to_png(wft) do
+      {:ok, png_binary, metadata} ->
+        key = "wft_preview_#{System.unique_integer([:positive])}"
+        RougailSolstice.ImageStore.delete_prefix("wft_preview_")
+        RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
+        url = RougailSolstice.ImageStore.url(key)
+
+        Logger.info("[InterfServer] WFT preview rendered: #{url}, stats: #{inspect(metadata)}")
+        State.set_wft_preview(state, url)
+
+      {:error, reason} ->
+        Logger.warning("[InterfServer] WFT render failed: #{inspect(reason)}")
+        state
     end
   end
 

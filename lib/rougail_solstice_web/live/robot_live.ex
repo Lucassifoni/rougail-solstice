@@ -343,6 +343,10 @@ defmodule RougailSolsticeWeb.RobotLive do
 
   defp format_error(reason), do: inspect(reason)
 
+  defp format_wft_source({:file, path}), do: path
+  defp format_wft_source({:binary, _}), do: "(in-memory)"
+  defp format_wft_source(_), do: ""
+
   defp format_changeset_error(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, _} -> msg end)
     |> Enum.map_join("; ", fn {k, v} -> "#{k}: #{Enum.join(v, ", ")}" end)
@@ -955,8 +959,8 @@ defmodule RougailSolsticeWeb.RobotLive do
         </div>
       </details>
 
-      <div :if={@interf_state.last_analysis.wft_path} class="mt-4 text-xs text-gray-500">
-        Output: {@interf_state.last_analysis.wft_path}
+      <div :if={@interf_state.last_analysis.wft} class="mt-4 text-xs text-gray-500">
+        Output: {format_wft_source(@interf_state.last_analysis.wft)}
       </div>
     </div>
     """

@@ -3,13 +3,19 @@ defmodule RougailSolstice.Interferometry.CLI do
   Wrapper for the dftfringe-cli binary.
   Provides functions to generate DFT previews and run full interferogram analysis.
 
-  Supports two modes configured via application config:
+  Supports three modes configured via application config:
   - :native - calls dftfringe-cli directly (must be in PATH)
   - :docker - calls via docker run with volume mounts
   - :mock - returns dummy data for testing
+
+  Additionally, when `use_sidecar: true` is configured, uses persistent sidecar
+  processes instead of spawning a new CLI process per request. The sidecar mode
+  uses the underlying :native or :docker mode to determine how to spawn the process.
   """
 
   require Logger
+
+  alias RougailSolstice.Interferometry.Sidecar.{Supervisor, Worker}
 
   @type circle :: %{cx: number(), cy: number(), r: number()}
   @type optical_params :: %{
@@ -19,28 +25,51 @@ defmodule RougailSolstice.Interferometry.CLI do
           conic: number(),
           obstruction: number() | nil
         }
+  @type dft_result :: {:file, Path.t()} | {:binary, binary()}
+  @type wft_result :: {:file, Path.t()} | {:binary, binary()} | nil
   @type analysis_result :: %{
           rms_waves: float(),
           pv_waves: float(),
           strehl: float(),
           zernikes_raw: %{integer() => float()},
           zernikes_nulled: %{integer() => float()},
-          wft_path: Path.t() | nil,
+          wft: wft_result(),
           csv_path: Path.t() | nil
         }
 
-  @spec dft_preview(Path.t(), circle(), Path.t()) :: {:ok, Path.t()} | {:error, term()}
-  def dft_preview(input_path, circle, output_path) do
-    if mode() == :mock do
-      mock_dft_preview(output_path)
-    else
-      run_dft_preview(input_path, circle, output_path)
+  @doc """
+  Returns whether sidecar mode is enabled.
+  """
+  @spec use_sidecar?() :: boolean()
+  def use_sidecar?, do: Keyword.get(config(), :use_sidecar, false)
+
+  @doc """
+  Generate a DFT preview image.
+
+  In file-based modes (native/docker), takes file paths, returns `{:ok, {:file, path}}`.
+  In sidecar mode, takes binary data, returns `{:ok, {:binary, png_data}}`.
+  """
+  @spec dft_preview(Path.t() | binary(), circle(), Path.t() | nil) ::
+          {:ok, dft_result()} | {:error, term()}
+  def dft_preview(input, circle, output_path \\ nil)
+
+  def dft_preview(input, circle, output_path) do
+    cond do
+      mode() == :mock -> mock_dft_preview(output_path)
+      use_sidecar?() -> run_dft_preview_sidecar(input, circle)
+      true -> run_dft_preview(input, circle, output_path)
     end
   end
 
   defp mock_dft_preview(output_path) do
-    File.write!(output_path, "mock dft preview")
-    {:ok, output_path}
+    data = "mock dft preview"
+
+    if output_path do
+      File.write!(output_path, data)
+      {:ok, {:file, output_path}}
+    else
+      {:ok, {:binary, data}}
+    end
   end
 
   defp run_dft_preview(input_path, circle, output_path) do
@@ -66,7 +95,9 @@ defmodule RougailSolstice.Interferometry.CLI do
 
     case System.cmd("dftfringe-cli", args, stderr_to_stdout: true) do
       {_output, 0} ->
-        if File.exists?(output_path), do: {:ok, output_path}, else: {:error, :output_not_created}
+        if File.exists?(output_path),
+          do: {:ok, {:file, output_path}},
+          else: {:error, :output_not_created}
 
       {output, code} ->
         {:error, {:cli_error, code, output}}
@@ -105,7 +136,7 @@ defmodule RougailSolstice.Interferometry.CLI do
 
           if File.exists?(staged_output) do
             File.cp!(staged_output, output_path)
-            {:ok, output_path}
+            {:ok, {:file, output_path}}
           else
             {:error, :output_not_created}
           end
@@ -128,16 +159,19 @@ defmodule RougailSolstice.Interferometry.CLI do
     wft_path = Path.join(output_dir, "#{basename}_#{timestamp}.wft")
     csv_path = Path.join(output_dir, "#{basename}_#{timestamp}_zernikes.csv")
 
-    case mode() do
-      :mock ->
+    cond do
+      mode() == :mock ->
         {:ok, output} = {:ok, mock_output()}
         {:ok, parsed} = parse_structured_output(output)
-        {:ok, Map.merge(parsed, %{wft_path: nil, csv_path: nil})}
+        {:ok, Map.merge(parsed, %{wft: nil, csv_path: nil})}
 
-      :native ->
+      use_sidecar?() ->
+        run_analyze_sidecar(input_path, circle, params, center_filter, wft_path, csv_path)
+
+      mode() == :native ->
         run_analyze_native(input_path, circle, params, center_filter, wft_path, csv_path)
 
-      :docker ->
+      mode() == :docker ->
         run_analyze_docker(input_path, circle, params, center_filter, wft_path, csv_path)
     end
   end
@@ -148,9 +182,11 @@ defmodule RougailSolstice.Interferometry.CLI do
     case System.cmd("dftfringe-cli", args, stderr_to_stdout: true) do
       {output, 0} ->
         with {:ok, parsed} <- parse_structured_output(output) do
+          wft_result = if File.exists?(wft_path), do: {:file, wft_path}
+
           result =
             parsed
-            |> Map.put(:wft_path, if(File.exists?(wft_path), do: wft_path))
+            |> Map.put(:wft, wft_result)
             |> Map.put(:csv_path, if(File.exists?(csv_path), do: csv_path))
 
           {:ok, result}
@@ -208,9 +244,11 @@ defmodule RougailSolstice.Interferometry.CLI do
           if File.exists?(staged_csv), do: File.cp!(staged_csv, csv_path)
 
           with {:ok, parsed} <- parse_structured_output(output) do
+            wft_result = if File.exists?(wft_path), do: {:file, wft_path}
+
             result =
               parsed
-              |> Map.put(:wft_path, if(File.exists?(wft_path), do: wft_path))
+              |> Map.put(:wft, wft_result)
               |> Map.put(:csv_path, if(File.exists?(csv_path), do: csv_path))
 
             Logger.info(
@@ -295,6 +333,92 @@ defmodule RougailSolstice.Interferometry.CLI do
       base ++ ["--obstruction", to_string(params.obstruction)]
     else
       base
+    end
+  end
+
+  defp run_dft_preview_sidecar(input, circle) do
+    image_binary = ensure_binary(input)
+
+    with {:ok, response} <-
+           Worker.send_preview(Supervisor.preview_worker(), image_binary, circle),
+         {:ok, png_binary} <- decode_base64_field(response, :dft) do
+      {:ok, {:binary, png_binary}}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp ensure_binary(data) when is_binary(data) do
+    if File.exists?(data) do
+      File.read!(data)
+    else
+      data
+    end
+  end
+
+  defp run_analyze_sidecar(input, circle, params, center_filter, _wft_path, _csv_path) do
+    config = %{
+      diameter: params.diameter,
+      roc: params.roc,
+      lambda: params.lambda,
+      conic: params.conic,
+      obstruction: params[:obstruction] || 0,
+      center_filter: center_filter,
+      do_null: true,
+      auto_invert: true,
+      zernike_terms: 48
+    }
+
+    worker = Supervisor.analyze_worker()
+    image_binary = ensure_binary(input)
+
+    with {:ok, _} <- Worker.send_config(worker, config),
+         {:ok, response} <- Worker.send_analyze(worker, image_binary, circle) do
+      wft_result =
+        case response[:wft] do
+          nil ->
+            nil
+
+          wft_b64 ->
+            case Base.decode64(wft_b64) do
+              {:ok, wft_binary} -> {:binary, wft_binary}
+              :error -> nil
+            end
+        end
+
+      result = %{
+        rms_waves: response[:rms] || 0.0,
+        pv_waves: response[:pv] || 0.0,
+        strehl: response[:strehl] || 0.0,
+        zernikes_raw: extract_zernikes(response),
+        zernikes_nulled: extract_zernikes(response),
+        wft: wft_result,
+        csv_path: nil
+      }
+
+      {:ok, result}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp extract_zernikes(response) do
+    response
+    |> Enum.filter(fn {key, _} ->
+      key_str = to_string(key)
+      String.starts_with?(key_str, "z") and String.length(key_str) <= 3
+    end)
+    |> Enum.map(fn {key, value} ->
+      index = key |> to_string() |> String.slice(1..-1//1) |> String.to_integer()
+      {index, value}
+    end)
+    |> Map.new()
+  end
+
+  defp decode_base64_field(response, key) do
+    case response[key] do
+      nil -> {:error, {:missing_field, key}}
+      value -> Base.decode64(value)
     end
   end
 

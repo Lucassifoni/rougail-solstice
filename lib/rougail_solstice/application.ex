@@ -7,24 +7,37 @@ defmodule RougailSolstice.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      RougailSolsticeWeb.Telemetry,
-      RougailSolstice.Repo,
-      {Ecto.Migrator,
-       repos: Application.fetch_env!(:rougail_solstice, :ecto_repos), skip: skip_migrations?()},
-      {DNSCluster, query: Application.get_env(:rougail_solstice, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: RougailSolstice.PubSub},
-      RougailSolstice.ImageStore,
-      RougailSolstice.Outline.Server,
-      RougailSolstice.Robot.Server,
-      RougailSolstice.Interferometry.Server,
-      RougailSolsticeWeb.Endpoint
-    ]
+    children =
+      [
+        RougailSolsticeWeb.Telemetry,
+        RougailSolstice.Repo,
+        {Ecto.Migrator,
+         repos: Application.fetch_env!(:rougail_solstice, :ecto_repos), skip: skip_migrations?()},
+        {DNSCluster,
+         query: Application.get_env(:rougail_solstice, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: RougailSolstice.PubSub},
+        RougailSolstice.ImageStore,
+        RougailSolstice.Outline.Server,
+        RougailSolstice.Robot.Server
+      ] ++
+        sidecar_children() ++
+        [
+          RougailSolstice.Interferometry.Server,
+          RougailSolsticeWeb.Endpoint
+        ]
 
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
     opts = [strategy: :one_for_one, name: RougailSolstice.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp sidecar_children do
+    cli_config = Application.get_env(:rougail_solstice, RougailSolstice.Interferometry.CLI, [])
+
+    if Keyword.get(cli_config, :use_sidecar, false) do
+      [RougailSolstice.Interferometry.Sidecar.Supervisor]
+    else
+      []
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration

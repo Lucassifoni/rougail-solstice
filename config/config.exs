@@ -12,11 +12,11 @@ config :rougail_solstice,
   generators: [timestamp_type: :utc_datetime]
 
 # Interferometry CLI configuration
-# mode: :native | :docker
-# native: calls dftfringe-cli directly (must be in PATH)
-# docker: calls via docker run (image must be built)
+# mode: :native | :docker (determines how the binary is executed)
+# use_sidecar: true | false (use persistent sidecar processes vs CLI per request)
 config :rougail_solstice, RougailSolstice.Interferometry.CLI,
-  mode: :native,
+  mode: :docker,
+  use_sidecar: true,
   docker_image: "dftfringe-cli:latest",
   docker_mount_dir: "/data"
 
