@@ -1,7 +1,9 @@
 import Config
 
-# Use mock mode for CLI (no actual dftfringe-cli binary needed)
-config :rougail_solstice, RougailSolstice.Interferometry.CLI, mode: :mock
+# Disable sidecar and use mock mode for CLI (no actual dftfringe-cli binary needed)
+config :rougail_solstice, RougailSolstice.Interferometry.CLI,
+  mode: :mock,
+  use_sidecar: false
 
 # Configure your database
 #
