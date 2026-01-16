@@ -15,7 +15,8 @@ defmodule RougailSolstice.Interferometry.Server do
 
   @pubsub RougailSolstice.PubSub
   @topic "interferometry:state"
-  @preview_interval 1000
+  @dft_pool_topic "dft_pool:results"
+  @preview_interval 200
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -78,6 +79,10 @@ defmodule RougailSolstice.Interferometry.Server do
 
   @impl true
   def init(_opts) do
+    if CLI.dft_backend() == :pool do
+      Phoenix.PubSub.subscribe(@pubsub, @dft_pool_topic)
+    end
+
     {:ok, State.new()}
   end
 
@@ -180,6 +185,25 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
+  def handle_info({:dft_preview_result, {:ok, png_binary, metadata}}, state) do
+    latency = System.monotonic_time(:millisecond) - metadata.submitted_at
+    Logger.debug("[InterfServer] DFT pool result received, latency=#{latency}ms")
+
+    key = "dft_preview_#{System.unique_integer([:positive])}"
+    RougailSolstice.ImageStore.delete_prefix("dft_preview_")
+    RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
+    dft_url = RougailSolstice.ImageStore.url(key)
+
+    new_state = State.set_dft_preview(state, dft_url)
+    broadcast(new_state)
+    {:noreply, new_state}
+  end
+
+  def handle_info({:dft_preview_result, {:error, reason}}, state) do
+    Logger.warning("[InterfServer] DFT pool error: #{inspect(reason)}")
+    {:noreply, state}
+  end
+
   defp capture_and_process_preview(state) do
     robot_state = RobotServer.get_state()
 
@@ -202,29 +226,52 @@ defmodule RougailSolstice.Interferometry.Server do
 
   defp process_dft_preview(state) do
     if State.ready_for_dft_preview?(state) do
-      result =
-        if CLI.use_sidecar?() do
-          process_dft_preview_sidecar(state)
-        else
-          process_dft_preview_file(state)
-        end
+      case CLI.dft_backend() do
+        :pool ->
+          process_dft_preview_pool(state)
 
-      case result do
-        {:ok, dft_url} ->
-          new_state = State.set_dft_preview(state, dft_url)
-          broadcast(new_state)
-          new_state
+        _sync_backend ->
+          result = process_dft_preview_sync(state)
 
-        {:error, reason} ->
-          Logger.warning("[InterfServer] DFT preview failed: #{inspect(reason)}")
-          state
+          case result do
+            {:ok, dft_url} ->
+              new_state = State.set_dft_preview(state, dft_url)
+              broadcast(new_state)
+              new_state
+
+            {:error, reason} ->
+              Logger.warning("[InterfServer] DFT preview failed: #{inspect(reason)}")
+              state
+          end
       end
     else
       state
     end
   end
 
-  defp process_dft_preview_sidecar(state) do
+  defp process_dft_preview_pool(state) do
+    with {:ok, image_binary} <- get_preview_binary(state.preview_frame_path) do
+      CLI.dft_preview_async(image_binary, state.outline_circle)
+    end
+
+    state
+  end
+
+  defp process_dft_preview_sync(state) do
+    case CLI.dft_backend() do
+      :nx ->
+        process_dft_preview_binary(state)
+
+      :sidecar ->
+        if CLI.use_sidecar?() do
+          process_dft_preview_binary(state)
+        else
+          process_dft_preview_file(state)
+        end
+    end
+  end
+
+  defp process_dft_preview_binary(state) do
     with {:ok, image_binary} <- get_preview_binary(state.preview_frame_path),
          {:ok, {:binary, png_binary}} <- CLI.dft_preview(image_binary, state.outline_circle) do
       key = "dft_preview_#{System.unique_integer([:positive])}"

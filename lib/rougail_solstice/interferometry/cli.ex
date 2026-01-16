@@ -11,10 +11,17 @@ defmodule RougailSolstice.Interferometry.CLI do
   Additionally, when `use_sidecar: true` is configured, uses persistent sidecar
   processes instead of spawning a new CLI process per request. The sidecar mode
   uses the underlying :native or :docker mode to determine how to spawn the process.
+
+  For DFT preview generation, alternative implementations are available:
+  - `dft_backend: :sidecar` (default) - uses the C++ sidecar/CLI
+  - `dft_backend: :nx` - uses pure Elixir/Nx/Evision implementation (synchronous)
+  - `dft_backend: :pool` - uses a pool of Nx workers (async, latest-wins for high framerate)
   """
 
   require Logger
 
+  alias RougailSolstice.Interferometry.DFT.Nx, as: DFTNx
+  alias RougailSolstice.Interferometry.DFT.Pool, as: DFTPool
   alias RougailSolstice.Interferometry.Sidecar.{Supervisor, Worker}
 
   @type circle :: %{cx: number(), cy: number(), r: number()}
@@ -44,10 +51,33 @@ defmodule RougailSolstice.Interferometry.CLI do
   def use_sidecar?, do: Keyword.get(config(), :use_sidecar, false)
 
   @doc """
-  Generate a DFT preview image.
+  Returns the DFT backend to use for preview generation.
+  - `:sidecar` (default) - uses C++ sidecar/CLI
+  - `:nx` - uses Elixir/Nx/Evision implementation (synchronous)
+  - `:pool` - uses pool of Nx workers (async, latest-wins)
+  """
+  @spec dft_backend() :: :sidecar | :nx | :pool
+  def dft_backend, do: Keyword.get(config(), :dft_backend, :sidecar)
+
+  @doc """
+  Returns the DFT size for Nx/pool backend (default: 512).
+  """
+  @spec dft_size() :: pos_integer()
+  def dft_size, do: Keyword.get(config(), :dft_size, 512)
+
+  @doc """
+  Returns the pool size for pool backend (default: 10).
+  """
+  @spec dft_pool_size() :: pos_integer()
+  def dft_pool_size, do: Keyword.get(config(), :dft_pool_size, 10)
+
+  @doc """
+  Generate a DFT preview image (synchronous).
 
   In file-based modes (native/docker), takes file paths, returns `{:ok, {:file, path}}`.
-  In sidecar mode, takes binary data, returns `{:ok, {:binary, png_data}}`.
+  In sidecar/nx/pool mode, takes binary data, returns `{:ok, {:binary, png_data}}`.
+
+  Note: For high-framerate async processing, use `dft_preview_async/3` with `:pool` backend.
   """
   @spec dft_preview(Path.t() | binary(), circle(), Path.t() | nil) ::
           {:ok, dft_result()} | {:error, term()}
@@ -56,8 +86,81 @@ defmodule RougailSolstice.Interferometry.CLI do
   def dft_preview(input, circle, output_path) do
     cond do
       mode() == :mock -> mock_dft_preview(output_path)
+      dft_backend() == :pool -> run_dft_preview_pool_sync(input, circle, output_path)
+      dft_backend() == :nx -> run_dft_preview_nx(input, circle, output_path)
       use_sidecar?() -> run_dft_preview_sidecar(input, circle)
       true -> run_dft_preview(input, circle, output_path)
+    end
+  end
+
+  @doc """
+  Submit a DFT preview for async processing (pool backend only).
+
+  Results are delivered via the pool's callback function.
+  Returns `:ok` immediately.
+  """
+  @spec dft_preview_async(binary(), circle()) :: :ok | {:error, :pool_not_configured}
+  def dft_preview_async(image_binary, circle) do
+    if dft_backend() == :pool do
+      DFTPool.submit(DFTPool, image_binary, circle)
+    else
+      {:error, :pool_not_configured}
+    end
+  end
+
+  defp run_dft_preview_pool_sync(input, circle, output_path, timeout \\ 5000) do
+    image_binary = ensure_binary(input)
+    caller = self()
+    ref = make_ref()
+
+    callback = fn result ->
+      send(caller, {ref, result})
+    end
+
+    {:ok, temp_pool} =
+      DFTPool.start_link(
+        pool_size: 1,
+        dft_size: dft_size(),
+        callback: callback
+      )
+
+    DFTPool.submit(temp_pool, image_binary, circle)
+
+    result =
+      receive do
+        {^ref, {:ok, png_binary, _metadata}} ->
+          if output_path do
+            File.write!(output_path, png_binary)
+            {:ok, {:file, output_path}}
+          else
+            {:ok, {:binary, png_binary}}
+          end
+
+        {^ref, {:error, reason}} ->
+          {:error, reason}
+      after
+        timeout ->
+          {:error, :timeout}
+      end
+
+    GenServer.stop(temp_pool)
+    result
+  end
+
+  defp run_dft_preview_nx(input, circle, output_path) do
+    image_binary = ensure_binary(input)
+
+    case DFTNx.compute_magnitude_preview(image_binary, circle, dft_size: dft_size()) do
+      {:ok, png_binary} ->
+        if output_path do
+          File.write!(output_path, png_binary)
+          {:ok, {:file, output_path}}
+        else
+          {:ok, {:binary, png_binary}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

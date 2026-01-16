@@ -21,6 +21,7 @@ defmodule RougailSolstice.Application do
         RougailSolstice.Robot.Server
       ] ++
         sidecar_children() ++
+        dft_pool_children() ++
         [
           RougailSolstice.Interferometry.Server,
           RougailSolsticeWeb.Endpoint
@@ -38,6 +39,33 @@ defmodule RougailSolstice.Application do
     else
       []
     end
+  end
+
+  defp dft_pool_children do
+    cli_config = Application.get_env(:rougail_solstice, RougailSolstice.Interferometry.CLI, [])
+
+    if Keyword.get(cli_config, :dft_backend) == :pool do
+      pool_size = Keyword.get(cli_config, :dft_pool_size, 10)
+      dft_size = Keyword.get(cli_config, :dft_size, 512)
+
+      [
+        {RougailSolstice.Interferometry.DFT.Pool,
+         name: RougailSolstice.Interferometry.DFT.Pool,
+         pool_size: pool_size,
+         dft_size: dft_size,
+         callback: &dft_pool_callback/1}
+      ]
+    else
+      []
+    end
+  end
+
+  defp dft_pool_callback(result) do
+    Phoenix.PubSub.broadcast(
+      RougailSolstice.PubSub,
+      "dft_pool:results",
+      {:dft_preview_result, result}
+    )
   end
 
   # Tell Phoenix to update the endpoint configuration

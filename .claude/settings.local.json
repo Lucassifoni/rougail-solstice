@@ -9,7 +9,8 @@
       "Bash(./bin/ci:*)",
       "Bash(mix format:*)",
       "Bash(mix compile:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(git log:*)"
     ]
   }
 }

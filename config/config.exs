@@ -18,7 +18,10 @@ config :rougail_solstice, RougailSolstice.Interferometry.CLI,
   mode: :docker,
   use_sidecar: true,
   docker_image: "dftfringe-cli:latest",
-  docker_mount_dir: "/data"
+  docker_mount_dir: "/data",
+  dft_backend: :pool,
+  dft_size: 512,
+  dft_pool_size: 10
 
 # Configures the endpoint
 config :rougail_solstice, RougailSolsticeWeb.Endpoint,

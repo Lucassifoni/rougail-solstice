@@ -41,7 +41,7 @@ defmodule RougailSolstice.Outline.Detection do
     ransac_samples: 800,
     ransac_inlier_threshold_ratio: 0.05,
     ransac_refinement_iterations: 2,
-    debug_save: true
+    debug_save: false
   }
 
   @spec run_detection([binary()], {pos_integer(), pos_integer()}, keyword()) ::
