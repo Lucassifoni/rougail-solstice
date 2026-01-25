@@ -20,35 +20,35 @@ defmodule RougailSolstice.Robot.Server do
     GenServer.start_link(__MODULE__, init_opts, name: name)
   end
 
-  def get_state(server \\ __MODULE__) do
+  def get_state(server) do
     GenServer.call(server, :get_state)
   end
 
-  def move_axis(server \\ __MODULE__, axis, delta) do
+  def move_axis(server, axis, delta) do
     GenServer.call(server, {:move_axis, axis, delta})
   end
 
-  def set_axis_position(server \\ __MODULE__, axis, position) do
+  def set_axis_position(server, axis, position) do
     GenServer.call(server, {:set_axis_position, axis, position})
   end
 
-  def lock_camera(server \\ __MODULE__) do
+  def lock_camera(server) do
     GenServer.call(server, :lock_camera)
   end
 
-  def take_picture(server \\ __MODULE__) do
+  def take_picture(server) do
     GenServer.call(server, :take_picture)
   end
 
-  def release_camera(server \\ __MODULE__) do
+  def release_camera(server) do
     GenServer.call(server, :release_camera)
   end
 
-  def reset(server \\ __MODULE__) do
+  def reset(server) do
     GenServer.call(server, :reset)
   end
 
-  def set_adapter(server \\ __MODULE__, adapter) do
+  def set_adapter(server, adapter) do
     GenServer.call(server, {:set_adapter, adapter})
   end
 

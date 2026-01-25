@@ -25,32 +25,32 @@ defmodule RougailSolstice.Outline.Server do
   end
 
   @spec enable(GenServer.server()) :: :ok
-  def enable(server \\ __MODULE__) do
+  def enable(server) do
     GenServer.call(server, :enable)
   end
 
   @spec disable(GenServer.server()) :: :ok
-  def disable(server \\ __MODULE__) do
+  def disable(server) do
     GenServer.call(server, :disable)
   end
 
   @spec enabled?(GenServer.server()) :: boolean()
-  def enabled?(server \\ __MODULE__) do
+  def enabled?(server) do
     GenServer.call(server, :enabled?)
   end
 
   @spec get_state(GenServer.server()) :: State.t()
-  def get_state(server \\ __MODULE__) do
+  def get_state(server) do
     GenServer.call(server, :get_state)
   end
 
   @spec update_detection_params(GenServer.server(), map()) :: :ok
-  def update_detection_params(server \\ __MODULE__, params) when is_map(params) do
+  def update_detection_params(server, params) when is_map(params) do
     GenServer.call(server, {:update_detection_params, params})
   end
 
   @spec update_state_params(GenServer.server(), map()) :: :ok
-  def update_state_params(server \\ __MODULE__, params) when is_map(params) do
+  def update_state_params(server, params) when is_map(params) do
     GenServer.call(server, {:update_state_params, params})
   end
 

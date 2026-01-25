@@ -22,9 +22,9 @@ defmodule RougailSolstice.CommandsTest do
       assert state.axes.x.position == initial.axes.x.position + 100
     end
 
-    test "returns error for invalid axis" do
+    test "returns error for invalid axis", %{robot: robot} do
       assert_raise FunctionClauseError, fn ->
-        Commands.move_axis(:invalid, 100)
+        Commands.move_axis(robot, :invalid, 100)
       end
     end
 

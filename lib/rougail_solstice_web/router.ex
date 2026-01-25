@@ -26,7 +26,6 @@ defmodule RougailSolsticeWeb.Router do
     live "/sessions/:session_id/robot", RobotLive
 
     get "/sessions/:session_id/images/:key", ImageController, :show_session
-    get "/images/:key", ImageController, :show
   end
 
   # Other scopes may use custom stacks.

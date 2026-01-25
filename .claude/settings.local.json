@@ -11,7 +11,8 @@
       "Bash(mix compile:*)",
       "Bash(grep:*)",
       "Bash(git log:*)",
-      "Bash(mix ecto.migrate:*)"
+      "Bash(mix ecto.migrate:*)",
+      "Bash(ls:*)"
     ]
   }
 }

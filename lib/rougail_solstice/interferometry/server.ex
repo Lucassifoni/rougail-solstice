@@ -28,48 +28,48 @@ defmodule RougailSolstice.Interferometry.Server do
   end
 
   @spec get_state(GenServer.server()) :: State.t()
-  def get_state(server \\ __MODULE__) do
+  def get_state(server) do
     GenServer.call(server, :get_state)
   end
 
   @spec set_outline_circle(GenServer.server(), State.circle()) :: {:ok, State.t()}
-  def set_outline_circle(server \\ __MODULE__, circle) do
+  def set_outline_circle(server, circle) do
     GenServer.call(server, {:set_outline_circle, circle})
   end
 
   @spec set_center_filter_radius(GenServer.server(), pos_integer()) ::
           {:ok, State.t()} | {:error, term()}
-  def set_center_filter_radius(server \\ __MODULE__, radius) do
+  def set_center_filter_radius(server, radius) do
     GenServer.call(server, {:set_center_filter_radius, radius})
   end
 
   @spec load_optical_config(GenServer.server(), integer()) :: {:ok, State.t()}
-  def load_optical_config(server \\ __MODULE__, config_id) do
+  def load_optical_config(server, config_id) do
     GenServer.call(server, {:load_optical_config, config_id})
   end
 
   @spec set_optical_params(GenServer.server(), State.optical_params()) :: {:ok, State.t()}
-  def set_optical_params(server \\ __MODULE__, params) do
+  def set_optical_params(server, params) do
     GenServer.call(server, {:set_optical_params, params})
   end
 
   @spec start_liveview(GenServer.server()) :: {:ok, State.t()}
-  def start_liveview(server \\ __MODULE__) do
+  def start_liveview(server) do
     GenServer.call(server, :start_liveview)
   end
 
   @spec stop_liveview(GenServer.server()) :: {:ok, State.t()}
-  def stop_liveview(server \\ __MODULE__) do
+  def stop_liveview(server) do
     GenServer.call(server, :stop_liveview)
   end
 
   @spec capture_full_shot(GenServer.server()) :: {:ok, State.t()} | {:error, term()}
-  def capture_full_shot(server \\ __MODULE__) do
+  def capture_full_shot(server) do
     GenServer.call(server, :capture_full_shot, 30_000)
   end
 
   @spec reset(GenServer.server()) :: {:ok, State.t()}
-  def reset(server \\ __MODULE__) do
+  def reset(server) do
     GenServer.call(server, :reset)
   end
 
@@ -364,9 +364,6 @@ defmodule RougailSolstice.Interferometry.Server do
         else
           process_dft_preview_file(state)
         end
-
-      :pool ->
-        {:error, :pool_not_supported_in_session_mode}
     end
   end
 

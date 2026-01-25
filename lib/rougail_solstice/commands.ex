@@ -4,8 +4,7 @@ defmodule RougailSolstice.Commands do
   This module abstracts control operations, enabling multiple input sources
   (web UI, gamepad channel) to use the same interface.
 
-  All functions accept optional server names as the first parameter,
-  defaulting to the global servers for production use.
+  All functions require explicit server references (session-scoped).
   """
 
   alias RougailSolstice.Interferometry.Server, as: InterfServer
@@ -15,34 +14,34 @@ defmodule RougailSolstice.Commands do
   @type result :: {:ok, term()} | {:error, term()}
 
   @spec move_axis(GenServer.server(), atom(), integer()) :: result()
-  def move_axis(robot_server \\ RobotServer, axis, delta)
+  def move_axis(robot_server, axis, delta)
       when axis in [:x, :y, :z] and is_integer(delta) do
     RobotServer.move_axis(robot_server, axis, delta)
   end
 
   @spec set_axis_position(GenServer.server(), atom(), integer()) :: result()
-  def set_axis_position(robot_server \\ RobotServer, axis, position)
+  def set_axis_position(robot_server, axis, position)
       when axis in [:x, :y, :z] and is_integer(position) do
     RobotServer.set_axis_position(robot_server, axis, position)
   end
 
   @spec lock_camera(GenServer.server()) :: result()
-  def lock_camera(robot_server \\ RobotServer) do
+  def lock_camera(robot_server) do
     RobotServer.lock_camera(robot_server)
   end
 
   @spec release_camera(GenServer.server()) :: result()
-  def release_camera(robot_server \\ RobotServer) do
+  def release_camera(robot_server) do
     RobotServer.release_camera(robot_server)
   end
 
   @spec take_picture(GenServer.server()) :: {:ok, term(), term()} | {:error, term()}
-  def take_picture(robot_server \\ RobotServer) do
+  def take_picture(robot_server) do
     RobotServer.take_picture(robot_server)
   end
 
   @spec start_liveview(GenServer.server(), GenServer.server()) :: result()
-  def start_liveview(robot_server \\ RobotServer, interf_server \\ InterfServer) do
+  def start_liveview(robot_server, interf_server) do
     case RobotServer.lock_camera(robot_server) do
       {:ok, _state} ->
         InterfServer.start_liveview(interf_server)
@@ -53,14 +52,14 @@ defmodule RougailSolstice.Commands do
   end
 
   @spec stop_liveview(GenServer.server(), GenServer.server()) :: result()
-  def stop_liveview(robot_server \\ RobotServer, interf_server \\ InterfServer) do
+  def stop_liveview(robot_server, interf_server) do
     result = InterfServer.stop_liveview(interf_server)
     RobotServer.release_camera(robot_server)
     result
   end
 
   @spec toggle_liveview(GenServer.server(), GenServer.server()) :: result()
-  def toggle_liveview(robot_server \\ RobotServer, interf_server \\ InterfServer) do
+  def toggle_liveview(robot_server, interf_server) do
     state = InterfServer.get_state(interf_server)
 
     if state.liveview_active do
@@ -71,13 +70,13 @@ defmodule RougailSolstice.Commands do
   end
 
   @spec set_outline_circle(GenServer.server(), number(), number(), number()) :: result()
-  def set_outline_circle(interf_server \\ InterfServer, cx, cy, r)
+  def set_outline_circle(interf_server, cx, cy, r)
       when is_number(cx) and is_number(cy) and is_number(r) do
     InterfServer.set_outline_circle(interf_server, %{cx: cx, cy: cy, r: r})
   end
 
   @spec adjust_outline_position(GenServer.server(), number(), number()) :: result()
-  def adjust_outline_position(interf_server \\ InterfServer, dx, dy)
+  def adjust_outline_position(interf_server, dx, dy)
       when is_number(dx) and is_number(dy) do
     state = InterfServer.get_state(interf_server)
     circle = state.outline_circle
@@ -90,7 +89,7 @@ defmodule RougailSolstice.Commands do
   end
 
   @spec adjust_outline_radius(GenServer.server(), number()) :: result()
-  def adjust_outline_radius(interf_server \\ InterfServer, delta) when is_number(delta) do
+  def adjust_outline_radius(interf_server, delta) when is_number(delta) do
     state = InterfServer.get_state(interf_server)
     circle = state.outline_circle
     new_r = max(1, circle.r + delta)
@@ -98,13 +97,13 @@ defmodule RougailSolstice.Commands do
   end
 
   @spec set_center_filter_radius(GenServer.server(), pos_integer()) :: result()
-  def set_center_filter_radius(interf_server \\ InterfServer, radius)
+  def set_center_filter_radius(interf_server, radius)
       when is_integer(radius) do
     InterfServer.set_center_filter_radius(interf_server, radius)
   end
 
   @spec adjust_center_filter_radius(GenServer.server(), integer()) :: result()
-  def adjust_center_filter_radius(interf_server \\ InterfServer, delta)
+  def adjust_center_filter_radius(interf_server, delta)
       when is_integer(delta) do
     state = InterfServer.get_state(interf_server)
     new_radius = max(1, state.center_filter_radius + delta)
@@ -112,27 +111,27 @@ defmodule RougailSolstice.Commands do
   end
 
   @spec capture_full_shot(GenServer.server()) :: result()
-  def capture_full_shot(interf_server \\ InterfServer) do
+  def capture_full_shot(interf_server) do
     InterfServer.capture_full_shot(interf_server)
   end
 
   @spec enable_auto_outline(GenServer.server()) :: :ok
-  def enable_auto_outline(outline_server \\ OutlineServer) do
+  def enable_auto_outline(outline_server) do
     OutlineServer.enable(outline_server)
   end
 
   @spec disable_auto_outline(GenServer.server()) :: :ok
-  def disable_auto_outline(outline_server \\ OutlineServer) do
+  def disable_auto_outline(outline_server) do
     OutlineServer.disable(outline_server)
   end
 
   @spec auto_outline_enabled?(GenServer.server()) :: boolean()
-  def auto_outline_enabled?(outline_server \\ OutlineServer) do
+  def auto_outline_enabled?(outline_server) do
     OutlineServer.enabled?(outline_server)
   end
 
   @spec toggle_auto_outline(GenServer.server()) :: :ok
-  def toggle_auto_outline(outline_server \\ OutlineServer) do
+  def toggle_auto_outline(outline_server) do
     if OutlineServer.enabled?(outline_server) do
       OutlineServer.disable(outline_server)
     else
@@ -141,17 +140,17 @@ defmodule RougailSolstice.Commands do
   end
 
   @spec get_outline_state(GenServer.server()) :: RougailSolstice.Outline.State.t()
-  def get_outline_state(outline_server \\ OutlineServer) do
+  def get_outline_state(outline_server) do
     OutlineServer.get_state(outline_server)
   end
 
   @spec update_detection_params(GenServer.server(), map()) :: :ok
-  def update_detection_params(outline_server \\ OutlineServer, params) when is_map(params) do
+  def update_detection_params(outline_server, params) when is_map(params) do
     OutlineServer.update_detection_params(outline_server, params)
   end
 
   @spec update_outline_state_params(GenServer.server(), map()) :: :ok
-  def update_outline_state_params(outline_server \\ OutlineServer, params) when is_map(params) do
+  def update_outline_state_params(outline_server, params) when is_map(params) do
     OutlineServer.update_state_params(outline_server, params)
   end
 end
