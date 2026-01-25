@@ -23,12 +23,10 @@ defmodule RougailSolsticeWeb.Router do
     live "/optical-pieces/new", OpticalPiecesLive.Index, :new
     live "/optical-pieces/:id/edit", OpticalPiecesLive.Index, :edit
 
-    live "/sessions/:session_id/robot", SessionRobotLive
+    live "/sessions/:session_id/robot", RobotLive
 
     get "/sessions/:session_id/images/:key", ImageController, :show_session
     get "/images/:key", ImageController, :show
-
-    live "/robot", RobotLive
   end
 
   # Other scopes may use custom stacks.

@@ -29,10 +29,16 @@ const AXIS = {
 
 const Gamepad = {
   mounted() {
-    this.channel = socket.channel("gamepad:control", {});
+    const sessionId = this.el.dataset.sessionId;
+    if (!sessionId) {
+      console.error("Gamepad hook: no session ID provided");
+      return;
+    }
+
+    this.channel = socket.channel(`gamepad:control:${sessionId}`, {});
     this.channel
       .join()
-      .receive("ok", () => console.log("Gamepad channel joined"))
+      .receive("ok", () => console.log(`Gamepad channel joined for session ${sessionId}`))
       .receive("error", (resp) =>
         console.error("Unable to join gamepad channel", resp)
       );

@@ -6,39 +6,56 @@ defmodule RougailSolsticeWeb.RobotLive do
   alias RougailSolstice.Commands
   alias RougailSolstice.Interferometry
   alias RougailSolstice.Interferometry.Server, as: InterfServer
+  alias RougailSolstice.Outline.Server, as: OutlineServer
   alias RougailSolstice.Robot.CameraAdapter
-  alias RougailSolstice.Robot.Server
-
-  @outline_preview_topic "outline:preview"
+  alias RougailSolstice.Robot.Server, as: RobotServer
+  alias RougailSolstice.Sessions.SessionManager
+  alias RougailSolstice.Sessions.Topics
 
   @impl true
-  def mount(_params, _session, socket) do
-    if connected?(socket) do
-      Server.subscribe()
-      InterfServer.subscribe()
-      Phoenix.PubSub.subscribe(RougailSolstice.PubSub, @outline_preview_topic)
+  def mount(%{"session_id" => session_id_str}, _session, socket) do
+    session_id = String.to_integer(session_id_str)
+
+    case SessionManager.get_session(session_id) do
+      {:ok, session_info} ->
+        servers = SessionManager.session_servers(session_id)
+
+        if connected?(socket) do
+          Topics.subscribe(Topics.robot(session_id))
+          Topics.subscribe(Topics.interferometry(session_id))
+          Topics.subscribe(Topics.outline(session_id))
+          Topics.subscribe(Topics.outline_preview(session_id))
+        end
+
+        robot_state = RobotServer.get_state(servers.robot)
+        interf_state = InterfServer.get_state(servers.interferometry)
+        outline_state = OutlineServer.get_state(servers.outline)
+        adapters = CameraAdapter.all()
+        configs = Interferometry.list_configs()
+
+        {:ok,
+         socket
+         |> assign(:session_id, session_id)
+         |> assign(:session_info, session_info)
+         |> assign(:servers, servers)
+         |> assign(:state, robot_state)
+         |> assign(:interf_state, interf_state)
+         |> assign(:outline_state, outline_state)
+         |> assign(:adapters, adapters)
+         |> assign(:configs, configs)
+         |> assign(:selected_config_id, session_info.optical_piece.id)
+         |> assign(:preview_version, 0)
+         |> assign(:dft_version, 0)
+         |> assign(:wft_version, 0)
+         |> assign(:auto_outline_enabled, outline_state.enabled)
+         |> assign(:error, nil)}
+
+      {:error, :not_found} ->
+        {:ok,
+         socket
+         |> put_flash(:error, "Session not found")
+         |> push_navigate(to: ~p"/")}
     end
-
-    state = Server.get_state()
-    interf_state = InterfServer.get_state()
-    adapters = CameraAdapter.all()
-    configs = Interferometry.list_configs()
-
-    outline_state = Commands.get_outline_state()
-
-    {:ok,
-     socket
-     |> assign(:state, state)
-     |> assign(:interf_state, interf_state)
-     |> assign(:outline_state, outline_state)
-     |> assign(:adapters, adapters)
-     |> assign(:configs, configs)
-     |> assign(:selected_config_id, nil)
-     |> assign(:preview_version, 0)
-     |> assign(:dft_version, 0)
-     |> assign(:wft_version, 0)
-     |> assign(:auto_outline_enabled, Commands.auto_outline_enabled?())
-     |> assign(:error, nil)}
   end
 
   @impl true
@@ -47,7 +64,7 @@ defmodule RougailSolsticeWeb.RobotLive do
     delta = String.to_integer(delta)
 
     socket =
-      case Commands.move_axis(axis, delta) do
+      case Commands.move_axis(socket.assigns.servers.robot, axis, delta) do
         {:ok, _state} -> assign(socket, :error, nil)
         {:error, reason} -> assign(socket, :error, format_error(reason))
       end
@@ -60,7 +77,7 @@ defmodule RougailSolsticeWeb.RobotLive do
     position = String.to_integer(position)
 
     socket =
-      case Commands.set_axis_position(axis, position) do
+      case Commands.set_axis_position(socket.assigns.servers.robot, axis, position) do
         {:ok, _state} -> assign(socket, :error, nil)
         {:error, reason} -> assign(socket, :error, format_error(reason))
       end
@@ -70,7 +87,7 @@ defmodule RougailSolsticeWeb.RobotLive do
 
   def handle_event("lock_camera", _params, socket) do
     socket =
-      case Commands.lock_camera() do
+      case Commands.lock_camera(socket.assigns.servers.robot) do
         {:ok, _state} -> assign(socket, :error, nil)
         {:error, reason} -> assign(socket, :error, format_error(reason))
       end
@@ -80,7 +97,7 @@ defmodule RougailSolsticeWeb.RobotLive do
 
   def handle_event("take_picture", _params, socket) do
     socket =
-      case Commands.take_picture() do
+      case Commands.take_picture(socket.assigns.servers.robot) do
         {:ok, _state, _capture} -> assign(socket, :error, nil)
         {:error, reason} -> assign(socket, :error, format_error(reason))
       end
@@ -90,7 +107,7 @@ defmodule RougailSolsticeWeb.RobotLive do
 
   def handle_event("release_camera", _params, socket) do
     socket =
-      case Commands.release_camera() do
+      case Commands.release_camera(socket.assigns.servers.robot) do
         {:ok, _state} -> assign(socket, :error, nil)
         {:error, reason} -> assign(socket, :error, format_error(reason))
       end
@@ -103,7 +120,7 @@ defmodule RougailSolsticeWeb.RobotLive do
 
     socket =
       if adapter do
-        case Server.set_adapter(adapter) do
+        case RobotServer.set_adapter(socket.assigns.servers.robot, adapter) do
           {:ok, _state} -> assign(socket, :error, nil)
           {:error, reason} -> assign(socket, :error, format_error(reason))
         end
@@ -115,8 +132,10 @@ defmodule RougailSolsticeWeb.RobotLive do
   end
 
   def handle_event("start_liveview", _params, socket) do
+    servers = socket.assigns.servers
+
     socket =
-      case Commands.start_liveview() do
+      case Commands.start_liveview(servers.robot, servers.interferometry) do
         {:ok, _state} -> assign(socket, :error, nil)
         {:error, reason} -> assign(socket, :error, format_error(reason))
       end
@@ -125,7 +144,8 @@ defmodule RougailSolsticeWeb.RobotLive do
   end
 
   def handle_event("stop_liveview", _params, socket) do
-    Commands.stop_liveview()
+    servers = socket.assigns.servers
+    Commands.stop_liveview(servers.robot, servers.interferometry)
     {:noreply, assign(socket, :error, nil)}
   end
 
@@ -133,12 +153,12 @@ defmodule RougailSolsticeWeb.RobotLive do
     cx = parse_number(params["cx"])
     cy = parse_number(params["cy"])
     r = parse_number(params["r"])
-    Commands.set_outline_circle(cx, cy, r)
+    Commands.set_outline_circle(socket.assigns.servers.interferometry, cx, cy, r)
     {:noreply, socket}
   end
 
   def handle_event("update_center_filter", %{"radius" => radius}, socket) do
-    Commands.set_center_filter_radius(parse_int(radius))
+    Commands.set_center_filter_radius(socket.assigns.servers.interferometry, parse_int(radius))
     {:noreply, socket}
   end
 
@@ -148,7 +168,7 @@ defmodule RougailSolsticeWeb.RobotLive do
 
   def handle_event("select_config", %{"config_id" => id}, socket) do
     config_id = String.to_integer(id)
-    InterfServer.load_optical_config(config_id)
+    InterfServer.load_optical_config(socket.assigns.servers.interferometry, config_id)
     {:noreply, assign(socket, :selected_config_id, config_id)}
   end
 
@@ -161,13 +181,13 @@ defmodule RougailSolsticeWeb.RobotLive do
       obstruction: parse_number(params["obstruction"] || "0")
     }
 
-    InterfServer.set_optical_params(optical_params)
+    InterfServer.set_optical_params(socket.assigns.servers.interferometry, optical_params)
     {:noreply, socket}
   end
 
   def handle_event("capture_full_shot", _params, socket) do
     socket =
-      case Commands.capture_full_shot() do
+      case Commands.capture_full_shot(socket.assigns.servers.interferometry) do
         {:ok, _state} -> assign(socket, :error, nil)
         {:error, reason} -> assign(socket, :error, format_error(reason))
       end
@@ -203,8 +223,9 @@ defmodule RougailSolsticeWeb.RobotLive do
   end
 
   def handle_event("toggle_auto_outline", _params, socket) do
-    Commands.toggle_auto_outline()
-    outline_state = Commands.get_outline_state()
+    outline_server = socket.assigns.servers.outline
+    Commands.toggle_auto_outline(outline_server)
+    outline_state = Commands.get_outline_state(outline_server)
 
     {:noreply,
      socket
@@ -226,8 +247,9 @@ defmodule RougailSolsticeWeb.RobotLive do
       debug_save: params["debug_save"] == "true"
     }
 
-    Commands.update_detection_params(detection_params)
-    outline_state = Commands.get_outline_state()
+    outline_server = socket.assigns.servers.outline
+    Commands.update_detection_params(outline_server, detection_params)
+    outline_state = Commands.get_outline_state(outline_server)
 
     {:noreply, assign(socket, :outline_state, outline_state)}
   end
@@ -239,10 +261,16 @@ defmodule RougailSolsticeWeb.RobotLive do
       threshold_percentile: parse_number(params["threshold_percentile"])
     }
 
-    Commands.update_outline_state_params(state_params)
-    outline_state = Commands.get_outline_state()
+    outline_server = socket.assigns.servers.outline
+    Commands.update_outline_state_params(outline_server, state_params)
+    outline_state = Commands.get_outline_state(outline_server)
 
     {:noreply, assign(socket, :outline_state, outline_state)}
+  end
+
+  def handle_event("close_session", _params, socket) do
+    SessionManager.close_session(socket.assigns.session_id)
+    {:noreply, push_navigate(socket, to: ~p"/")}
   end
 
   @impl true
@@ -275,6 +303,13 @@ defmodule RougailSolsticeWeb.RobotLive do
   def handle_info({:preview_edges, url}, socket) do
     src = url <> "?v=" <> Integer.to_string(System.monotonic_time())
     {:noreply, push_event(socket, "update_edges_overlay", %{src: src})}
+  end
+
+  def handle_info({:outline_state_changed, outline_state}, socket) do
+    {:noreply,
+     socket
+     |> assign(:outline_state, outline_state)
+     |> assign(:auto_outline_enabled, outline_state.enabled)}
   end
 
   defp maybe_bump_version(socket, key, true), do: update(socket, key, &(&1 + 1))
@@ -376,9 +411,29 @@ defmodule RougailSolsticeWeb.RobotLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <div id="gamepad-controller" phx-hook="Gamepad"></div>
+      <div id="gamepad-controller" phx-hook="Gamepad" data-session-id={@session_id}></div>
       <div class="w-full px-6 py-6">
-        <h1 class="text-2xl font-bold mb-6">Robot Control</h1>
+        <div class="flex justify-between items-center mb-6">
+          <div>
+            <h1 class="text-2xl font-bold">{@session_info.optical_piece.name}</h1>
+            <p class="text-sm text-gray-500">
+              Session {@session_id} | Started: {Calendar.strftime(@session_info.started_at, "%H:%M:%S")}
+            </p>
+          </div>
+          <div class="flex gap-2">
+            <.link navigate={~p"/"} class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded font-medium transition-colors">
+              Back to Sessions
+            </.link>
+            <button
+              type="button"
+              phx-click="close_session"
+              data-confirm="Close this session?"
+              class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded font-medium transition-colors"
+            >
+              Close Session
+            </button>
+          </div>
+        </div>
 
         <.error_banner error={@error} />
 

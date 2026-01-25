@@ -49,6 +49,10 @@ defmodule RougailSolstice.Outline.Detection do
   def run_detection(binaries, {_expected_width, _expected_height}, opts \\ []) do
     min_confidence = Keyword.get(opts, :min_confidence, 0.5)
     params = Map.merge(@default_params, Keyword.get(opts, :detection_params, %{}))
+    session_ctx = %{
+      session_id: Keyword.get(opts, :session_id),
+      image_store: Keyword.get(opts, :image_store, RougailSolstice.ImageStore)
+    }
 
     Logger.info("[Detection] Starting with #{length(binaries)} frames")
     debug_save = params.debug_save
@@ -62,7 +66,7 @@ defmodule RougailSolstice.Outline.Detection do
          {:ok, variance_map} <- compute_variance_map(normalized_mats) do
       if debug_save, do: save_variance_image(variance_map, "02_variance")
       variance_u8 = variance_to_u8(variance_map)
-      results = run_all_strategies(variance_map, variance_u8, {width, height}, params)
+      results = run_all_strategies(variance_map, variance_u8, {width, height}, params, session_ctx)
 
       case select_best_result(results, min_confidence) do
         {:ok, result} ->
@@ -107,9 +111,9 @@ defmodule RougailSolstice.Outline.Detection do
     |> Evision.Mat.from_nx()
   end
 
-  defp run_all_strategies(_variance_map, variance_u8, dims, params) do
+  defp run_all_strategies(_variance_map, variance_u8, dims, params, session_ctx) do
     [
-      run_edge_ray_cast(variance_u8, dims, params)
+      run_edge_ray_cast(variance_u8, dims, params, session_ctx)
     ]
     |> Enum.filter(&match?({:ok, _}, &1))
     |> Enum.map(fn {:ok, r} -> r end)
@@ -304,7 +308,7 @@ defmodule RougailSolstice.Outline.Detection do
     end
   end
 
-  defp run_edge_ray_cast(variance_u8, {width, height}, params) do
+  defp run_edge_ray_cast(variance_u8, {width, height}, params, session_ctx) do
     Logger.info("[Detection] Strategy: Edge Ray Cast")
 
     edge_ray_count = params.edge_ray_count
@@ -325,8 +329,10 @@ defmodule RougailSolstice.Outline.Detection do
 
     edges_binary = Evision.imencode(".png", edges)
     key = "edges_preview"
-    RougailSolstice.ImageStore.put(key, edges_binary, content_type: "image/png")
-    broadcast_preview_edges(RougailSolstice.ImageStore.url(key))
+    image_store = session_ctx.image_store
+    RougailSolstice.ImageStore.put(image_store, key, edges_binary, content_type: "image/png")
+    url = RougailSolstice.ImageStore.session_url(session_ctx.session_id, key)
+    broadcast_preview_edges(url, session_ctx.session_id)
 
     edges_tensor = Evision.Mat.to_nx(edges, EXLA.Backend)
 
@@ -372,10 +378,12 @@ defmodule RougailSolstice.Outline.Detection do
       :no_detection
   end
 
-  defp broadcast_preview_edges(path) do
+  defp broadcast_preview_edges(path, session_id) do
+    alias RougailSolstice.Sessions.Topics
+
     Phoenix.PubSub.broadcast(
       RougailSolstice.PubSub,
-      "outline:preview",
+      Topics.outline_preview(session_id),
       {:preview_edges, path}
     )
   end

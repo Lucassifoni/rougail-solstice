@@ -108,82 +108,79 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="max-w-4xl mx-auto p-6">
-      <div class="flex justify-between items-center mb-6">
-        <h1 class="text-2xl font-bold"><%= @page_title %></h1>
-        <div class="flex gap-2">
-          <.link navigate={~p"/"} class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">
-            Back to Sessions
-          </.link>
-          <%= if @live_action == :index do %>
+    <Layouts.app flash={@flash}>
+      <div class="max-w-4xl mx-auto p-6">
+        <div class="flex justify-between items-center mb-6">
+          <h1 class="text-2xl font-bold">{@page_title}</h1>
+          <div class="flex gap-2">
             <.link
+              navigate={~p"/"}
+              class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded font-medium transition-colors"
+            >
+              Back to Sessions
+            </.link>
+            <.link
+              :if={@live_action == :index}
               navigate={~p"/optical-pieces/new"}
-              class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+              class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded font-medium transition-colors"
             >
               New Optical Piece
             </.link>
-          <% end %>
+          </div>
         </div>
-      </div>
 
-      <%= if @live_action in [:new, :edit] do %>
-        <div class="bg-white border rounded p-6 mb-6">
+        <div :if={@live_action in [:new, :edit]} class="bg-white rounded-lg shadow p-6 mb-6">
           <.form_component
             form={@form}
             action={@live_action}
             detected_cameras={@detected_cameras}
           />
         </div>
-      <% else %>
-        <div class="space-y-2">
-          <%= for op <- @optical_pieces do %>
-            <div class="flex items-center justify-between bg-white border rounded p-4">
-              <div>
-                <div class="font-medium text-lg"><%= op.name %></div>
-                <div class="text-sm text-gray-600">
-                  Diameter: <%= op.diameter %>mm | RoC: <%= op.roc %>mm | λ: <%= op.lambda %>nm
-                </div>
-                <div class="text-sm text-gray-600">
-                  Conic: <%= op.conic %> | Obstruction: <%= Float.round(op.obstruction * 100, 1) %>%
-                </div>
-                <%= if op.camera_port do %>
-                  <div class="text-sm text-gray-600">
-                    Camera: <%= op.camera_model || "Unknown" %> @ <%= op.camera_port %>
-                  </div>
-                <% else %>
-                  <div class="text-sm text-gray-400 italic">No camera assigned</div>
-                <% end %>
-                <%= if op.notes do %>
-                  <div class="text-sm text-gray-500 mt-1"><%= op.notes %></div>
-                <% end %>
-              </div>
-              <div class="flex gap-2">
-                <.link
-                  navigate={~p"/optical-pieces/#{op.id}/edit"}
-                  class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300"
-                >
-                  Edit
-                </.link>
-                <button
-                  phx-click="delete"
-                  phx-value-id={op.id}
-                  data-confirm="Are you sure you want to delete this optical piece?"
-                  class="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          <% end %>
 
-          <%= if @optical_pieces == [] do %>
-            <p class="text-gray-500 italic text-center py-8">
-              No optical pieces configured yet.
-            </p>
-          <% end %>
+        <div :if={@live_action == :index} class="space-y-2">
+          <div
+            :for={op <- @optical_pieces}
+            class="flex items-center justify-between bg-white rounded-lg shadow p-4"
+          >
+            <div>
+              <div class="font-medium text-lg">{op.name}</div>
+              <div class="text-sm text-gray-600">
+                Diameter: {op.diameter}mm | RoC: {op.roc}mm | λ: {op.lambda}nm
+              </div>
+              <div class="text-sm text-gray-600">
+                Conic: {op.conic} | Obstruction: {Float.round(op.obstruction * 100, 1)}%
+              </div>
+              <div :if={op.camera_port} class="text-sm text-gray-600">
+                Camera: {op.camera_model || "Unknown"} @ {op.camera_port}
+              </div>
+              <div :if={!op.camera_port} class="text-sm text-gray-400 italic">No camera assigned</div>
+              <div :if={op.notes} class="text-sm text-gray-500 mt-1">{op.notes}</div>
+            </div>
+            <div class="flex gap-2">
+              <.link
+                navigate={~p"/optical-pieces/#{op.id}/edit"}
+                class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded font-medium transition-colors"
+              >
+                Edit
+              </.link>
+              <button
+                type="button"
+                phx-click="delete"
+                phx-value-id={op.id}
+                data-confirm="Are you sure you want to delete this optical piece?"
+                class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded font-medium transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+
+          <p :if={@optical_pieces == []} class="text-gray-500 italic text-center py-8">
+            No optical pieces configured yet.
+          </p>
         </div>
-      <% end %>
-    </div>
+      </div>
+    </Layouts.app>
     """
   end
 
@@ -227,22 +224,18 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
           <button
             type="button"
             phx-click="detect_cameras"
-            class="text-sm px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
+            class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 rounded text-sm font-medium transition-colors"
           >
             Detect Cameras
           </button>
         </div>
 
-        <%= if @detected_cameras != [] do %>
-          <div class="mb-2 text-sm text-gray-600">
-            Detected cameras:
-            <ul class="list-disc ml-4">
-              <%= for cam <- @detected_cameras do %>
-                <li><%= cam.model %> @ <%= cam.port %></li>
-              <% end %>
-            </ul>
-          </div>
-        <% end %>
+        <div :if={@detected_cameras != []} class="mb-2 text-sm text-gray-600">
+          Detected cameras:
+          <ul class="list-disc ml-4">
+            <li :for={cam <- @detected_cameras}>{cam.model} @ {cam.port}</li>
+          </ul>
+        </div>
 
         <div class="grid grid-cols-2 gap-4">
           <div>
@@ -262,10 +255,16 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
       </div>
 
       <div class="flex gap-2 pt-4">
-        <button type="submit" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+        <button
+          type="submit"
+          class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded font-medium transition-colors"
+        >
           Save
         </button>
-        <.link navigate={~p"/optical-pieces"} class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
+        <.link
+          navigate={~p"/optical-pieces"}
+          class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded font-medium transition-colors"
+        >
           Cancel
         </.link>
       </div>

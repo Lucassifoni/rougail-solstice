@@ -6,7 +6,10 @@ defmodule RougailSolstice.Robot.CameraAdapter do
 
   alias __MODULE__.{Virtual, Canon}
 
-  @type capture_result :: {:ok, Path.t()} | {:error, term()}
+  @type capture_result ::
+          {:ok, Path.t()}
+          | {:ok, {:binary, binary(), content_type :: String.t()}}
+          | {:error, term()}
   @type adapter :: module() | struct()
 
   @adapters [Virtual, Canon]

@@ -14,6 +14,9 @@ defmodule RougailSolstice.Sessions.Topics do
   def outline(nil), do: "outline:state"
   def outline(session_id), do: "session:#{session_id}:outline:state"
 
+  def outline_preview(nil), do: "outline:preview"
+  def outline_preview(session_id), do: "session:#{session_id}:outline:preview"
+
   def session_events, do: "sessions:events"
 
   def subscribe(topic) do

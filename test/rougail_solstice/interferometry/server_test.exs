@@ -5,44 +5,44 @@ defmodule RougailSolstice.Interferometry.ServerTest do
   alias RougailSolstice.Interferometry.Server
 
   setup do
-    {:ok, _} = Server.reset()
-    Server.subscribe()
-    :ok
+    {:ok, pid} = start_supervised({Server, name: :test_interf_server})
+    Server.subscribe(nil)
+    %{server: pid}
   end
 
-  describe "get_state/0" do
+  describe "get_state/1" do
     test "returns initial state" do
-      state = Server.get_state()
+      state = Server.get_state(:test_interf_server)
       assert state.liveview_active == false
       assert state.outline_circle == %{cx: 0, cy: 0, r: 100}
       assert state.center_filter_radius == 10
     end
   end
 
-  describe "set_outline_circle/1" do
+  describe "set_outline_circle/2" do
     test "updates circle and broadcasts" do
-      {:ok, state} = Server.set_outline_circle(%{cx: 150, cy: 200, r: 120})
+      {:ok, state} = Server.set_outline_circle(:test_interf_server, %{cx: 150, cy: 200, r: 120})
 
       assert state.outline_circle == %{cx: 150, cy: 200, r: 120}
       assert_receive {:interferometry_state_changed, ^state}
     end
   end
 
-  describe "set_center_filter_radius/1" do
+  describe "set_center_filter_radius/2" do
     test "updates radius with valid value" do
-      {:ok, state} = Server.set_center_filter_radius(25)
+      {:ok, state} = Server.set_center_filter_radius(:test_interf_server, 25)
 
       assert state.center_filter_radius == 25
       assert_receive {:interferometry_state_changed, ^state}
     end
 
     test "rejects invalid radius" do
-      {:error, :invalid_radius} = Server.set_center_filter_radius(0)
+      {:error, :invalid_radius} = Server.set_center_filter_radius(:test_interf_server, 0)
       refute_receive {:interferometry_state_changed, _}
     end
   end
 
-  describe "set_optical_params/1" do
+  describe "set_optical_params/2" do
     test "updates optical params and broadcasts" do
       params = %{
         diameter: 203.0,
@@ -52,14 +52,14 @@ defmodule RougailSolstice.Interferometry.ServerTest do
         obstruction: 0.0
       }
 
-      {:ok, state} = Server.set_optical_params(params)
+      {:ok, state} = Server.set_optical_params(:test_interf_server, params)
 
       assert state.optical_params == params
       assert_receive {:interferometry_state_changed, ^state}
     end
   end
 
-  describe "load_optical_config/1" do
+  describe "load_optical_config/2" do
     test "loads config from database" do
       {:ok, config} =
         Interferometry.create_config(%{
@@ -71,7 +71,7 @@ defmodule RougailSolstice.Interferometry.ServerTest do
           obstruction: 0.1
         })
 
-      {:ok, state} = Server.load_optical_config(config.id)
+      {:ok, state} = Server.load_optical_config(:test_interf_server, config.id)
 
       assert state.optical_params.diameter == 250.0
       assert state.optical_params.roc == 1500.0
@@ -82,19 +82,19 @@ defmodule RougailSolstice.Interferometry.ServerTest do
     end
   end
 
-  describe "start_liveview/0" do
+  describe "start_liveview/1" do
     test "sets liveview_active to true and broadcasts" do
-      {:ok, state} = Server.start_liveview()
+      {:ok, state} = Server.start_liveview(:test_interf_server)
 
       assert state.liveview_active == true
       assert_receive {:interferometry_state_changed, ^state}
     end
   end
 
-  describe "stop_liveview/0" do
+  describe "stop_liveview/1" do
     test "sets liveview_active to false and broadcasts" do
-      {:ok, _} = Server.start_liveview()
-      {:ok, state} = Server.stop_liveview()
+      {:ok, _} = Server.start_liveview(:test_interf_server)
+      {:ok, state} = Server.stop_liveview(:test_interf_server)
 
       assert state.liveview_active == false
       assert_receive {:interferometry_state_changed, _}
@@ -102,12 +102,12 @@ defmodule RougailSolstice.Interferometry.ServerTest do
     end
   end
 
-  describe "reset/0" do
+  describe "reset/1" do
     test "resets to initial state and broadcasts" do
-      {:ok, _} = Server.set_outline_circle(%{cx: 500, cy: 500, r: 200})
-      {:ok, _} = Server.start_liveview()
+      {:ok, _} = Server.set_outline_circle(:test_interf_server, %{cx: 500, cy: 500, r: 200})
+      {:ok, _} = Server.start_liveview(:test_interf_server)
 
-      {:ok, state} = Server.reset()
+      {:ok, state} = Server.reset(:test_interf_server)
 
       assert state.outline_circle == %{cx: 0, cy: 0, r: 100}
       assert state.liveview_active == false

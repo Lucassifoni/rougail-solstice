@@ -133,7 +133,15 @@ defmodule RougailSolstice.Outline.Server do
 
     if State.ready_for_detection?(server_state.state) do
       Logger.info("[OutlineServer] Running detection pipeline...")
-      handle_detection_result(run_detection_pipeline(server_state.state), server_state)
+
+      result =
+        run_detection_pipeline(
+          server_state.state,
+          server_state.session_id,
+          server_state.image_store
+        )
+
+      handle_detection_result(result, server_state)
     else
       {:noreply, server_state}
     end
@@ -275,7 +283,7 @@ defmodule RougailSolstice.Outline.Server do
     end
   end
 
-  defp run_detection_pipeline(state) do
+  defp run_detection_pipeline(state, session_id, image_store) do
     frames = State.get_frames(state)
     binaries = Enum.map(frames, & &1.binary)
     dims = hd(frames).dimensions
@@ -283,7 +291,9 @@ defmodule RougailSolstice.Outline.Server do
     Detection.run_detection(binaries, dims,
       threshold_percentile: state.threshold_percentile,
       min_confidence: state.min_confidence,
-      detection_params: state.detection_params
+      detection_params: state.detection_params,
+      session_id: session_id,
+      image_store: image_store
     )
   end
 

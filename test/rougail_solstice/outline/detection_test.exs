@@ -1,9 +1,14 @@
 defmodule RougailSolstice.Outline.DetectionTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias RougailSolstice.Outline.Detection
 
   @samples_dir "priv/static/samples"
+
+  setup do
+    {:ok, _pid} = start_supervised(RougailSolstice.ImageStore)
+    :ok
+  end
 
   defp load_sample_images do
     Path.wildcard(Path.join(@samples_dir, "*.JPG"))

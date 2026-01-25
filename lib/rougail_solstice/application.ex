@@ -16,22 +16,12 @@ defmodule RougailSolstice.Application do
         {Phoenix.PubSub, name: RougailSolstice.PubSub},
         {Registry, keys: :unique, name: RougailSolstice.Sessions.Registry},
         {DynamicSupervisor, name: RougailSolstice.Sessions.DynamicSupervisor, strategy: :one_for_one},
-        RougailSolstice.Sessions.SessionManager
-      ] ++
-        legacy_singleton_children() ++
-        [RougailSolsticeWeb.Endpoint]
+        RougailSolstice.Sessions.SessionManager,
+        RougailSolsticeWeb.Endpoint
+      ]
 
     opts = [strategy: :one_for_one, name: RougailSolstice.Supervisor]
     Supervisor.start_link(children, opts)
-  end
-
-  defp legacy_singleton_children do
-    [
-      RougailSolstice.ImageStore,
-      RougailSolstice.Robot.Server,
-      RougailSolstice.Outline.Server,
-      RougailSolstice.Interferometry.Server
-    ]
   end
 
   @impl true

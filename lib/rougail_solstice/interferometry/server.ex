@@ -230,7 +230,22 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
-  defp store_preview_in_session(file_path, state) do
+  defp store_preview_in_session({:binary, binary, content_type}, state) do
+    with {:ok, dims} <- get_binary_dimensions(binary) do
+      preview_key = "preview_#{System.unique_integer([:positive])}"
+
+      ImageStore.delete_prefix(state.image_store, "preview_")
+      ImageStore.put(state.image_store, preview_key, binary,
+        content_type: content_type,
+        dimensions: dims
+      )
+
+      url = ImageStore.session_url(state.session_id, preview_key)
+      {:ok, url, dims}
+    end
+  end
+
+  defp store_preview_in_session(file_path, state) when is_binary(file_path) do
     with {:ok, binary} <- File.read(file_path),
          {:ok, dims} <- get_file_dimensions(file_path) do
       preview_key = "preview_#{System.unique_integer([:positive])}"
@@ -247,7 +262,22 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
-  defp store_full_shot_in_session(file_path, state) do
+  defp store_full_shot_in_session({:binary, binary, content_type}, state) do
+    with {:ok, dims} <- get_binary_dimensions(binary) do
+      shot_key = "full_shot_#{System.unique_integer([:positive])}"
+
+      ImageStore.delete_prefix(state.image_store, "full_shot_")
+      ImageStore.put(state.image_store, shot_key, binary,
+        content_type: content_type,
+        dimensions: dims
+      )
+
+      url = ImageStore.session_url(state.session_id, shot_key)
+      {:ok, url, dims}
+    end
+  end
+
+  defp store_full_shot_in_session(file_path, state) when is_binary(file_path) do
     with {:ok, binary} <- File.read(file_path),
          {:ok, dims} <- get_file_dimensions(file_path) do
       shot_key = "full_shot_#{System.unique_integer([:positive])}"
@@ -261,6 +291,21 @@ defmodule RougailSolstice.Interferometry.Server do
 
       url = ImageStore.session_url(state.session_id, shot_key)
       {:ok, url, dims}
+    end
+  end
+
+  defp get_binary_dimensions(binary) do
+    case Evision.imdecode(binary, Evision.Constant.cv_IMREAD_UNCHANGED()) do
+      %Evision.Mat{} = mat ->
+        shape = Evision.Mat.shape(mat)
+
+        case Tuple.to_list(shape) do
+          [h, w | _] -> {:ok, {w, h}}
+          _ -> {:error, :invalid_shape}
+        end
+
+      _ ->
+        {:error, :decode_failed}
     end
   end
 

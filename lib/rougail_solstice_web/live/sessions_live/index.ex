@@ -68,104 +68,103 @@ defmodule RougailSolsticeWeb.SessionsLive.Index do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="max-w-4xl mx-auto p-6">
-      <h1 class="text-2xl font-bold mb-6">Sessions</h1>
+    <Layouts.app flash={@flash}>
+      <div class="max-w-4xl mx-auto p-6">
+        <h1 class="text-2xl font-bold mb-6">Sessions</h1>
 
-      <div class="mb-8">
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-xl font-semibold">Open Sessions</h2>
-        </div>
-
-        <%= if @sessions == [] do %>
-          <p class="text-gray-500 italic">No active sessions</p>
-        <% else %>
-          <div class="space-y-2">
-            <%= for session <- @sessions do %>
-              <div class="flex items-center justify-between bg-green-50 border border-green-200 rounded p-3">
-                <div>
-                  <span class="font-medium"><%= session.optical_piece_name %></span>
-                  <span class="text-sm text-gray-500 ml-2">
-                    Started <%= format_time(session.started_at) %>
-                  </span>
-                </div>
-                <div class="flex gap-2">
-                  <.link
-                    navigate={~p"/sessions/#{session.session_id}/robot"}
-                    class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-                  >
-                    Open
-                  </.link>
-                  <button
-                    phx-click="close_session"
-                    phx-value-id={session.session_id}
-                    class="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            <% end %>
+        <div class="mb-8">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-semibold">Open Sessions</h2>
           </div>
-        <% end %>
-      </div>
 
-      <div>
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-xl font-semibold">Optical Pieces</h2>
-          <.link
-            navigate={~p"/optical-pieces"}
-            class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300"
-          >
-            Manage
-          </.link>
+          <p :if={@sessions == []} class="text-gray-500 italic">No active sessions</p>
+
+          <div :if={@sessions != []} class="space-y-2">
+            <div
+              :for={session <- @sessions}
+              class="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg shadow p-4"
+            >
+              <div>
+                <span class="font-medium">{session.optical_piece_name}</span>
+                <span class="text-sm text-gray-500 ml-2">
+                  Started {format_time(session.started_at)}
+                </span>
+              </div>
+              <div class="flex gap-2">
+                <.link
+                  navigate={~p"/sessions/#{session.session_id}/robot"}
+                  class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded font-medium transition-colors"
+                >
+                  Open
+                </.link>
+                <button
+                  type="button"
+                  phx-click="close_session"
+                  phx-value-id={session.session_id}
+                  class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded font-medium transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <%= if @optical_pieces == [] do %>
-          <p class="text-gray-500 italic">
+        <div>
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-semibold">Optical Pieces</h2>
+            <.link
+              navigate={~p"/optical-pieces"}
+              class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded font-medium transition-colors"
+            >
+              Manage
+            </.link>
+          </div>
+
+          <p :if={@optical_pieces == []} class="text-gray-500 italic">
             No optical pieces configured.
             <.link navigate={~p"/optical-pieces/new"} class="text-blue-500 underline">
               Create one
             </.link>
           </p>
-        <% else %>
-          <div class="space-y-2">
-            <%= for op <- @optical_pieces do %>
-              <div class="flex items-center justify-between bg-white border rounded p-3">
-                <div>
-                  <span class="font-medium"><%= op.name %></span>
-                  <span class="text-sm text-gray-500 ml-2">
-                    D=<%= op.diameter %>mm, RoC=<%= op.roc %>mm
-                  </span>
-                  <%= if op.camera_port do %>
-                    <span class="text-sm text-gray-500 ml-2">
-                      Camera: <%= op.camera_model || op.camera_port %>
-                    </span>
-                  <% end %>
-                </div>
-                <div class="flex gap-2">
-                  <%= if session_open?(op.id, @sessions) do %>
-                    <.link
-                      navigate={~p"/sessions/#{op.id}/robot"}
-                      class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600"
-                    >
-                      Continue
-                    </.link>
-                  <% else %>
-                    <button
-                      phx-click="open_session"
-                      phx-value-id={op.id}
-                      class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-                    >
-                      Start Session
-                    </button>
-                  <% end %>
-                </div>
+
+          <div :if={@optical_pieces != []} class="space-y-2">
+            <div
+              :for={op <- @optical_pieces}
+              class="flex items-center justify-between bg-white rounded-lg shadow p-4"
+            >
+              <div>
+                <span class="font-medium">{op.name}</span>
+                <span class="text-sm text-gray-500 ml-2">
+                  D={op.diameter}mm, RoC={op.roc}mm
+                </span>
+                <span :if={op.camera_port} class="text-sm text-gray-500 ml-2">
+                  Camera: {op.camera_model || op.camera_port}
+                </span>
               </div>
-            <% end %>
+              <div class="flex gap-2">
+                <.link
+                  :if={session_open?(op.id, @sessions)}
+                  navigate={~p"/sessions/#{op.id}/robot"}
+                  class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded font-medium transition-colors"
+                >
+                  Continue
+                </.link>
+                <button
+                  :if={not session_open?(op.id, @sessions)}
+                  type="button"
+                  phx-click="open_session"
+                  phx-value-id={op.id}
+                  class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded font-medium transition-colors"
+                >
+                  Start Session
+                </button>
+              </div>
+            </div>
           </div>
-        <% end %>
+        </div>
       </div>
-    </div>
+    </Layouts.app>
     """
   end
 
