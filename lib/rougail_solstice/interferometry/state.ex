@@ -107,11 +107,29 @@ defmodule RougailSolstice.Interferometry.State do
 
   @spec ready_for_analysis?(t()) :: boolean()
   def ready_for_analysis?(%__MODULE__{} = state) do
-    state.optical_params != nil and
-      state.outline_circle.r > 0 and
-      state.full_shot_path != nil and
-      state.full_shot_dimensions != nil
+    analysis_readiness(state) == :ready
   end
+
+  @type readiness_check :: :ready | {:not_ready, [atom()]}
+
+  @spec analysis_readiness(t()) :: readiness_check()
+  def analysis_readiness(%__MODULE__{} = state) do
+    missing =
+      []
+      |> maybe_add(:outline_circle, state.outline_circle.r <= 0)
+      |> maybe_add(:optical_params, is_nil(state.optical_params))
+      |> maybe_add(:full_shot, is_nil(state.full_shot_path))
+      |> maybe_add(:preview_dimensions, is_nil(state.preview_dimensions))
+      |> maybe_add(:full_shot_dimensions, is_nil(state.full_shot_dimensions))
+
+    case missing do
+      [] -> :ready
+      list -> {:not_ready, list}
+    end
+  end
+
+  defp maybe_add(list, key, true), do: [key | list]
+  defp maybe_add(list, _key, false), do: list
 
   @spec ready_for_dft_preview?(t()) :: boolean()
   def ready_for_dft_preview?(%__MODULE__{} = state) do

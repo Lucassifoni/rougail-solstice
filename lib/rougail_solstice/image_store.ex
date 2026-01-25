@@ -59,4 +59,34 @@ defmodule RougailSolstice.ImageStore do
   def session_url(session_id, key) do
     "/sessions/#{session_id}/images/#{key}"
   end
+
+  @doc """
+  Extracts the image key from a session URL.
+  Returns {:ok, key} or :error.
+  """
+  @spec extract_key(String.t()) :: {:ok, String.t()} | :error
+  def extract_key("/sessions/" <> rest) do
+    case String.split(rest, "/images/", parts: 2) do
+      [_session_id, key] -> {:ok, key}
+      _ -> :error
+    end
+  end
+
+  def extract_key("/images/" <> key), do: {:ok, key}
+  def extract_key(_), do: :error
+
+  @doc """
+  Fetches binary data from a session URL.
+  """
+  @spec fetch_binary(GenServer.server(), String.t()) :: {:ok, binary()} | {:error, term()}
+  def fetch_binary(store, url) do
+    with {:ok, key} <- extract_key(url),
+         %{binary: binary} when binary != nil <- get(store, key) do
+      {:ok, binary}
+    else
+      nil -> {:error, :not_found}
+      %{binary: nil} -> {:error, :not_found}
+      :error -> {:error, :invalid_url}
+    end
+  end
 end

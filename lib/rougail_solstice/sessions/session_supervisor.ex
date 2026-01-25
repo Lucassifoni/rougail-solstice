@@ -9,6 +9,7 @@ defmodule RougailSolstice.Sessions.SessionSupervisor do
 
   use Supervisor
 
+  alias RougailSolstice.Interferometry.Server, as: InterfServer
   alias RougailSolstice.Robot.CameraAdapter
   alias RougailSolstice.Sessions.Registry, as: SessionRegistry
 
@@ -29,6 +30,9 @@ defmodule RougailSolstice.Sessions.SessionSupervisor do
     optical_piece = Keyword.fetch!(opts, :optical_piece)
     adapter = Keyword.get(opts, :adapter) || CameraAdapter.from_optical_piece(optical_piece)
 
+    interf_server = via(session_id, :interferometry)
+    outline_server = via(session_id, :outline)
+
     children =
       [
         {RougailSolstice.ImageStore, name: via(session_id, :image_store)},
@@ -38,16 +42,19 @@ defmodule RougailSolstice.Sessions.SessionSupervisor do
          adapter: adapter,
          image_store: via(session_id, :image_store)},
         {RougailSolstice.Outline.Server,
-         name: via(session_id, :outline),
+         name: outline_server,
          session_id: session_id,
-         interf_server: via(session_id, :interferometry),
-         image_store: via(session_id, :image_store)},
+         image_store: via(session_id, :image_store),
+         on_circle_detected: fn circle ->
+           InterfServer.set_outline_circle(interf_server, circle)
+         end},
         {RougailSolstice.Interferometry.Server,
-         name: via(session_id, :interferometry),
+         name: interf_server,
          session_id: session_id,
          robot_server: via(session_id, :robot),
          image_store: via(session_id, :image_store),
-         optical_piece: optical_piece}
+         optical_piece: optical_piece,
+         outline_server: outline_server}
       ] ++ sidecar_children(session_id)
 
     Supervisor.init(children, strategy: :one_for_one)

@@ -181,10 +181,94 @@ defmodule RougailSolstice.Interferometry.StateTest do
           conic: -1.0,
           obstruction: 0.0
         })
+        |> State.set_preview_frame("/tmp/preview.jpg", {640, 480})
         |> State.set_full_shot("/tmp/capture.jpg", {3456, 2304})
         |> State.set_outline_circle(%{cx: 100, cy: 100, r: 80})
 
       assert State.ready_for_analysis?(state)
+    end
+  end
+
+  describe "analysis_readiness/1" do
+    test "returns :ready when all preconditions are met" do
+      state =
+        State.new()
+        |> State.set_optical_params(%{
+          diameter: 203.0,
+          roc: 1438.0,
+          lambda: 518.0,
+          conic: -1.0,
+          obstruction: 0.0
+        })
+        |> State.set_preview_frame("/tmp/preview.jpg", {640, 480})
+        |> State.set_full_shot("/tmp/capture.jpg", {3456, 2304})
+        |> State.set_outline_circle(%{cx: 100, cy: 100, r: 80})
+
+      assert State.analysis_readiness(state) == :ready
+    end
+
+    test "returns {:not_ready, missing} with missing optical params" do
+      state = State.new()
+      assert {:not_ready, missing} = State.analysis_readiness(state)
+      assert :optical_params in missing
+    end
+
+    test "returns {:not_ready, missing} with missing full_shot" do
+      state =
+        State.new()
+        |> State.set_optical_params(%{
+          diameter: 203.0,
+          roc: 1438.0,
+          lambda: 518.0,
+          conic: -1.0,
+          obstruction: 0.0
+        })
+
+      assert {:not_ready, missing} = State.analysis_readiness(state)
+      assert :full_shot in missing
+    end
+
+    test "returns {:not_ready, missing} with missing preview_dimensions" do
+      state =
+        State.new()
+        |> State.set_optical_params(%{
+          diameter: 203.0,
+          roc: 1438.0,
+          lambda: 518.0,
+          conic: -1.0,
+          obstruction: 0.0
+        })
+        |> State.set_full_shot("/tmp/capture.jpg", {3456, 2304})
+        |> State.set_outline_circle(%{cx: 100, cy: 100, r: 80})
+
+      assert {:not_ready, missing} = State.analysis_readiness(state)
+      assert :preview_dimensions in missing
+    end
+
+    test "returns {:not_ready, missing} with zero radius circle" do
+      state =
+        State.new()
+        |> State.set_optical_params(%{
+          diameter: 203.0,
+          roc: 1438.0,
+          lambda: 518.0,
+          conic: -1.0,
+          obstruction: 0.0
+        })
+        |> State.set_full_shot("/tmp/capture.jpg", {3456, 2304})
+        |> State.set_outline_circle(%{cx: 100, cy: 100, r: 0})
+
+      assert {:not_ready, missing} = State.analysis_readiness(state)
+      assert :outline_circle in missing
+    end
+
+    test "returns all missing preconditions" do
+      state = State.new()
+      assert {:not_ready, missing} = State.analysis_readiness(state)
+      assert :optical_params in missing
+      assert :full_shot in missing
+      assert :preview_dimensions in missing
+      assert :full_shot_dimensions in missing
     end
   end
 

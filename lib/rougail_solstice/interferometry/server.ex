@@ -14,13 +14,21 @@ defmodule RougailSolstice.Interferometry.Server do
   alias RougailSolstice.Interferometry.State
   alias RougailSolstice.Interferometry.WFT.Nx, as: WFT
   alias RougailSolstice.OpticalPieces
+  alias RougailSolstice.Outline.Server, as: OutlineServer
   alias RougailSolstice.Robot.Server, as: RobotServer
   alias RougailSolstice.Sessions.Topics
 
   @pubsub RougailSolstice.PubSub
   @preview_interval 200
 
-  defstruct [:interf_state, :session_id, :robot_server, :image_store, :optical_piece]
+  defstruct [
+    :interf_state,
+    :session_id,
+    :robot_server,
+    :image_store,
+    :optical_piece,
+    :outline_server
+  ]
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -73,6 +81,11 @@ defmodule RougailSolstice.Interferometry.Server do
     GenServer.call(server, :reset)
   end
 
+  @spec analysis_readiness(GenServer.server()) :: State.readiness_check()
+  def analysis_readiness(server) do
+    GenServer.call(server, :analysis_readiness)
+  end
+
   @spec subscribe(integer() | nil) :: :ok | {:error, term()}
   def subscribe(session_id \\ nil) do
     Phoenix.PubSub.subscribe(@pubsub, Topics.interferometry(session_id))
@@ -87,6 +100,7 @@ defmodule RougailSolstice.Interferometry.Server do
     robot_server = Keyword.get(opts, :robot_server, RobotServer)
     image_store = Keyword.get(opts, :image_store, ImageStore)
     optical_piece = Keyword.get(opts, :optical_piece)
+    outline_server = Keyword.get(opts, :outline_server)
 
     interf_state = State.new()
 
@@ -104,12 +118,17 @@ defmodule RougailSolstice.Interferometry.Server do
        session_id: session_id,
        robot_server: robot_server,
        image_store: image_store,
-       optical_piece: optical_piece
+       optical_piece: optical_piece,
+       outline_server: outline_server
      }}
   end
 
   @impl true
   def handle_call(:get_state, _from, state), do: {:reply, state.interf_state, state}
+
+  def handle_call(:analysis_readiness, _from, state) do
+    {:reply, State.analysis_readiness(state.interf_state), state}
+  end
 
   def handle_call({:set_outline_circle, circle}, _from, state) do
     new_interf = State.set_outline_circle(state.interf_state, circle)
@@ -215,6 +234,7 @@ defmodule RougailSolstice.Interferometry.Server do
       {:ok, {:binary, binary, content_type}} ->
         case store_preview_in_session(binary, content_type, state) do
           {:ok, url, dims} ->
+            push_frame_to_outline(state.outline_server, binary, dims)
             new_interf = State.set_preview_frame(state.interf_state, url, dims)
             new_state = %{state | interf_state: new_interf}
             broadcast(new_state)
@@ -228,6 +248,12 @@ defmodule RougailSolstice.Interferometry.Server do
       {:error, _} ->
         state
     end
+  end
+
+  defp push_frame_to_outline(nil, _binary, _dims), do: :ok
+
+  defp push_frame_to_outline(outline_server, binary, dims) do
+    OutlineServer.push_frame(outline_server, binary, dims)
   end
 
   defp store_preview_in_session(binary, content_type, state) do
@@ -301,7 +327,7 @@ defmodule RougailSolstice.Interferometry.Server do
     interf = state.interf_state
     image_store = state.image_store
 
-    with {:ok, image_binary} <- get_image_binary(interf.preview_frame_path, image_store),
+    with {:ok, image_binary} <- ImageStore.fetch_binary(image_store, interf.preview_frame_path),
          {:ok, {:binary, png_binary}} <-
            CLI.dft_preview(image_binary, interf.outline_circle, session_id: state.session_id) do
       key = "dft_preview_#{System.unique_integer([:positive])}"
@@ -311,66 +337,51 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
-  defp get_image_binary(url, image_store) when is_binary(url) do
-    case extract_image_key(url) do
-      {:ok, key} ->
-        case ImageStore.get(image_store, key) do
-          %{binary: binary} -> {:ok, binary}
-          nil -> {:error, :image_not_found}
-        end
-
-      :error ->
-        {:error, :invalid_url}
-    end
-  end
-
-  defp extract_image_key("/sessions/" <> rest) do
-    case String.split(rest, "/images/", parts: 2) do
-      [_session_id, key] -> {:ok, key}
-      _ -> :error
-    end
-  end
-
-  defp extract_image_key(_), do: :error
-
   defp run_analysis_if_ready(state) do
     interf = state.interf_state
-    ready = State.ready_for_analysis?(interf)
-    Logger.info("[InterfServer] run_analysis_if_ready: ready=#{ready}")
 
-    with true <- ready,
-         {:ok, scaled_circle} <- State.scale_circle_to_full_shot(interf) do
-      Logger.info("""
-      [InterfServer] Running analysis:
-        preview_dimensions: #{inspect(interf.preview_dimensions)}
-        full_shot_dimensions: #{inspect(interf.full_shot_dimensions)}
-        outline_circle (preview): cx=#{interf.outline_circle.cx}, cy=#{interf.outline_circle.cy}, r=#{interf.outline_circle.r}
-        scaled_circle (full shot): cx=#{scaled_circle.cx}, cy=#{scaled_circle.cy}, r=#{scaled_circle.r}
-      """)
+    case State.analysis_readiness(interf) do
+      :ready ->
+        run_analysis(state)
 
-      case run_cli_analysis(state.session_id, interf, scaled_circle, state.image_store) do
-        {:ok, result} ->
-          Logger.info("[InterfServer] Analysis succeeded, rms=#{result.rms_waves}")
-          new_interf = State.set_analysis(interf, result)
-
-          {new_interf, new_state} =
-            render_wft_preview(%{state | interf_state: new_interf}, result)
-
-          Logger.info(
-            "[InterfServer] After render_wft_preview, wft_preview_path=#{inspect(new_interf.wft_preview_path)}"
-          )
-
-          broadcast(new_state)
-          new_state
-
-        {:error, reason} ->
-          Logger.error("[InterfServer] Analysis failed: #{inspect(reason)}")
-          state
-      end
-    else
-      false ->
-        Logger.debug("[InterfServer] Not ready for analysis")
+      {:not_ready, missing} ->
+        Logger.debug("[InterfServer] Not ready for analysis, missing: #{inspect(missing)}")
         state
+    end
+  end
+
+  defp run_analysis(state) do
+    interf = state.interf_state
+
+    case State.scale_circle_to_full_shot(interf) do
+      {:ok, scaled_circle} ->
+        Logger.info("""
+        [InterfServer] Running analysis:
+          preview_dimensions: #{inspect(interf.preview_dimensions)}
+          full_shot_dimensions: #{inspect(interf.full_shot_dimensions)}
+          outline_circle (preview): cx=#{interf.outline_circle.cx}, cy=#{interf.outline_circle.cy}, r=#{interf.outline_circle.r}
+          scaled_circle (full shot): cx=#{scaled_circle.cx}, cy=#{scaled_circle.cy}, r=#{scaled_circle.r}
+        """)
+
+        case run_cli_analysis(state.session_id, interf, scaled_circle, state.image_store) do
+          {:ok, result} ->
+            Logger.info("[InterfServer] Analysis succeeded, rms=#{result.rms_waves}")
+            new_interf = State.set_analysis(interf, result)
+
+            {new_interf, new_state} =
+              render_wft_preview(%{state | interf_state: new_interf}, result)
+
+            Logger.info(
+              "[InterfServer] After render_wft_preview, wft_preview_path=#{inspect(new_interf.wft_preview_path)}"
+            )
+
+            broadcast(new_state)
+            new_state
+
+          {:error, reason} ->
+            Logger.error("[InterfServer] Analysis failed: #{inspect(reason)}")
+            state
+        end
 
       {:error, reason} ->
         Logger.error("[InterfServer] Circle scaling failed: #{inspect(reason)}")
@@ -379,7 +390,7 @@ defmodule RougailSolstice.Interferometry.Server do
   end
 
   defp run_cli_analysis(session_id, interf, scaled_circle, image_store) do
-    with {:ok, image_binary} <- get_image_binary(interf.full_shot_path, image_store) do
+    with {:ok, image_binary} <- ImageStore.fetch_binary(image_store, interf.full_shot_path) do
       CLI.analyze(
         image_binary,
         scaled_circle,

@@ -1,9 +1,10 @@
 defmodule RougailSolstice.Outline.Server do
   @moduledoc """
   GenServer managing automatic outline detection.
-  Subscribes to interferometry state changes and runs circle detection
+  Receives frames via push_frame/2 and runs circle detection
   on a rolling window of preview frames.
   Supports session-scoped operation with optional session_id.
+  When a circle is detected, invokes the on_circle_detected callback.
   """
 
   use GenServer
@@ -11,12 +12,9 @@ defmodule RougailSolstice.Outline.Server do
   require Logger
 
   alias RougailSolstice.ImageStore
-  alias RougailSolstice.Interferometry.Server, as: InterfServer
   alias RougailSolstice.Outline.Detection
   alias RougailSolstice.Outline.State
-  alias RougailSolstice.Sessions.Topics
 
-  @pubsub RougailSolstice.PubSub
   @process_interval_ms 200
 
   def start_link(opts \\ []) do
@@ -54,13 +52,16 @@ defmodule RougailSolstice.Outline.Server do
     GenServer.call(server, {:update_state_params, params})
   end
 
+  @spec push_frame(GenServer.server(), binary(), {integer(), integer()}) :: :ok
+  def push_frame(server, binary, dimensions) do
+    GenServer.cast(server, {:push_frame, binary, dimensions})
+  end
+
   @impl true
   def init(opts) do
     session_id = Keyword.get(opts, :session_id)
-    interf_server = Keyword.get(opts, :interf_server, InterfServer)
     image_store = Keyword.get(opts, :image_store, ImageStore)
-
-    Phoenix.PubSub.subscribe(@pubsub, Topics.interferometry(session_id))
+    on_circle_detected = Keyword.get(opts, :on_circle_detected, &noop/1)
 
     state = State.new(opts)
 
@@ -68,28 +69,26 @@ defmodule RougailSolstice.Outline.Server do
      %{
        state: state,
        session_id: session_id,
-       interf_server: interf_server,
        image_store: image_store,
+       on_circle_detected: on_circle_detected,
        pending_detection: false,
-       last_process_time: now() - @process_interval_ms,
-       last_preview_path: nil
+       last_process_time: now() - @process_interval_ms
      }}
   end
+
+  defp noop(_), do: :ok
 
   @impl true
   def handle_call(:enable, _from, server_state) do
     new_state = State.enable(server_state.state)
     Logger.info("[OutlineServer] Auto-outline enabled")
-
-    server_state = %{server_state | state: new_state}
-    server_state = maybe_capture_current_frame(server_state)
-    {:reply, :ok, server_state}
+    {:reply, :ok, %{server_state | state: new_state}}
   end
 
   def handle_call(:disable, _from, server_state) do
     new_state = State.disable(server_state.state)
     Logger.info("[OutlineServer] Auto-outline disabled")
-    {:reply, :ok, %{server_state | state: new_state, last_preview_path: nil}}
+    {:reply, :ok, %{server_state | state: new_state}}
   end
 
   def handle_call(:enabled?, _from, server_state) do
@@ -118,9 +117,23 @@ defmodule RougailSolstice.Outline.Server do
   end
 
   @impl true
-  def handle_info({:interferometry_state_changed, interf_state}, server_state) do
-    if server_state.state.enabled and interf_state.liveview_active do
-      server_state = maybe_capture_frame(server_state, interf_state)
+  def handle_cast({:push_frame, binary, dimensions}, server_state) do
+    if server_state.state.enabled do
+      frame = %{
+        binary: binary,
+        dimensions: dimensions,
+        timestamp: System.monotonic_time(:millisecond)
+      }
+
+      new_state = State.push_frame(server_state.state, frame)
+      frame_count = State.frame_count(new_state)
+      max_frames = new_state.max_frames
+
+      Logger.debug(
+        "[OutlineServer] Received frame #{frame_count}/#{max_frames} (#{byte_size(binary)} bytes, #{inspect(dimensions)})"
+      )
+
+      server_state = %{server_state | state: new_state}
       server_state = maybe_schedule_detection(server_state)
       {:noreply, server_state}
     else
@@ -128,6 +141,7 @@ defmodule RougailSolstice.Outline.Server do
     end
   end
 
+  @impl true
   def handle_info(:run_detection, server_state) do
     server_state = %{server_state | pending_detection: false}
 
@@ -156,7 +170,7 @@ defmodule RougailSolstice.Outline.Server do
       "[OutlineServer] Circle detected: cx=#{round(result.circle.cx)}, cy=#{round(result.circle.cy)}, r=#{round(result.circle.r)} (confidence: #{Float.round(result.confidence, 2)}, method: #{result.method})"
     )
 
-    update_interferometry_circle(server_state, result.circle)
+    server_state.on_circle_detected.(result.circle)
     new_state = State.set_detection(server_state.state, Map.put(result, :detected_at, now()))
     {:noreply, %{server_state | state: new_state, last_process_time: now()}}
   end
@@ -168,90 +182,6 @@ defmodule RougailSolstice.Outline.Server do
 
     new_state = State.record_failure(server_state.state)
     {:noreply, %{server_state | state: new_state}}
-  end
-
-  defp maybe_capture_frame(server_state, interf_state) do
-    preview_path = interf_state.preview_frame_path
-
-    if preview_path && preview_path != server_state.last_preview_path do
-      case fetch_frame_binary(
-             preview_path,
-             interf_state.preview_dimensions,
-             server_state.image_store
-           ) do
-        {:ok, binary, dims} ->
-          frame = %{
-            binary: binary,
-            dimensions: dims,
-            timestamp: System.monotonic_time(:millisecond)
-          }
-
-          new_state = State.push_frame(server_state.state, frame)
-          frame_count = State.frame_count(new_state)
-          max_frames = new_state.max_frames
-
-          Logger.debug(
-            "[OutlineServer] Captured frame #{frame_count}/#{max_frames} (#{byte_size(binary)} bytes, #{inspect(dims)})"
-          )
-
-          %{server_state | state: new_state, last_preview_path: preview_path}
-
-        {:error, reason} ->
-          Logger.debug("[OutlineServer] Failed to fetch frame: #{inspect(reason)}")
-          server_state
-      end
-    else
-      server_state
-    end
-  end
-
-  defp fetch_frame_binary(url, dims, image_store) when is_binary(url) do
-    case extract_image_key(url) do
-      {:ok, key} ->
-        case ImageStore.get(image_store, key) do
-          %{binary: binary} when binary != nil ->
-            actual_dims = dims || {640, 480}
-            {:ok, binary, actual_dims}
-
-          _ ->
-            {:error, :not_found}
-        end
-
-      :error ->
-        case File.read(url) do
-          {:ok, binary} ->
-            actual_dims = dims || get_file_dimensions(url) || {640, 480}
-            {:ok, binary, actual_dims}
-
-          error ->
-            error
-        end
-    end
-  end
-
-  defp fetch_frame_binary(_, _, _), do: {:error, :invalid_path}
-
-  defp extract_image_key("/sessions/" <> rest) do
-    case String.split(rest, "/images/", parts: 2) do
-      [_session_id, key] -> {:ok, key}
-      _ -> :error
-    end
-  end
-
-  defp extract_image_key("/images/" <> key), do: {:ok, key}
-  defp extract_image_key(_), do: :error
-
-  defp get_file_dimensions(path) do
-    case System.cmd("identify", ["-format", "%wx%h", path], stderr_to_stdout: true) do
-      {output, 0} ->
-        case String.split(String.trim(output), "x") do
-          [w, h] -> {String.to_integer(w), String.to_integer(h)}
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
   end
 
   defp maybe_schedule_detection(server_state) do
@@ -305,21 +235,6 @@ defmodule RougailSolstice.Outline.Server do
     case Map.get(params, key) do
       nil -> state
       value -> Map.put(state, key, value)
-    end
-  end
-
-  defp update_interferometry_circle(server_state, circle) do
-    InterfServer.set_outline_circle(server_state.interf_server, circle)
-  end
-
-  defp maybe_capture_current_frame(server_state) do
-    interf_state = InterfServer.get_state(server_state.interf_server)
-
-    if interf_state.liveview_active do
-      Logger.debug("[OutlineServer] Liveview active, capturing current frame immediately")
-      maybe_capture_frame(server_state, interf_state)
-    else
-      server_state
     end
   end
 

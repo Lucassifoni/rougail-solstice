@@ -114,4 +114,30 @@ defmodule RougailSolstice.Interferometry.ServerTest do
       assert_receive {:interferometry_state_changed, _}
     end
   end
+
+  describe "analysis_readiness/1" do
+    test "returns {:not_ready, missing} for initial state" do
+      assert {:not_ready, missing} = Server.analysis_readiness(:test_interf_server)
+      assert :optical_params in missing
+      assert :full_shot in missing
+    end
+
+    test "returns :ready when fully configured" do
+      {:ok, _} =
+        Server.set_optical_params(:test_interf_server, %{
+          diameter: 203.0,
+          roc: 1438.0,
+          lambda: 518.0,
+          conic: -1.0,
+          obstruction: 0.0
+        })
+
+      {:ok, _} = Server.set_outline_circle(:test_interf_server, %{cx: 100, cy: 100, r: 80})
+
+      assert {:not_ready, missing} = Server.analysis_readiness(:test_interf_server)
+      assert :full_shot in missing
+      refute :optical_params in missing
+      refute :outline_circle in missing
+    end
+  end
 end
