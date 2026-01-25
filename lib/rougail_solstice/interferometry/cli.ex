@@ -79,18 +79,25 @@ defmodule RougailSolstice.Interferometry.CLI do
 
   Note: For high-framerate async processing, use `dft_preview_async/3` with `:pool` backend.
   """
-  @spec dft_preview(Path.t() | binary(), circle(), Path.t() | nil) ::
+  @spec dft_preview(Path.t() | binary(), circle(), Path.t() | nil | keyword()) ::
           {:ok, dft_result()} | {:error, term()}
-  def dft_preview(input, circle, output_path \\ nil)
+  def dft_preview(input, circle, output_path_or_opts \\ nil)
 
-  def dft_preview(input, circle, output_path) do
+  def dft_preview(input, circle, opts) when is_list(opts) do
+    session_id = Keyword.get(opts, :session_id)
+    output_path = Keyword.get(opts, :output_path)
+
     cond do
       mode() == :mock -> mock_dft_preview(output_path)
       dft_backend() == :pool -> run_dft_preview_pool_sync(input, circle, output_path)
       dft_backend() == :nx -> run_dft_preview_nx(input, circle, output_path)
-      use_sidecar?() -> run_dft_preview_sidecar(input, circle)
+      use_sidecar?() -> run_dft_preview_sidecar(input, circle, session_id)
       true -> run_dft_preview(input, circle, output_path)
     end
+  end
+
+  def dft_preview(input, circle, output_path) do
+    dft_preview(input, circle, output_path: output_path)
   end
 
   @doc """
@@ -439,11 +446,11 @@ defmodule RougailSolstice.Interferometry.CLI do
     end
   end
 
-  defp run_dft_preview_sidecar(input, circle) do
+  defp run_dft_preview_sidecar(input, circle, session_id) do
     image_binary = ensure_binary(input)
+    worker = Supervisor.preview_worker(session_id)
 
-    with {:ok, response} <-
-           Worker.send_preview(Supervisor.preview_worker(), image_binary, circle),
+    with {:ok, response} <- Worker.send_preview(worker, image_binary, circle),
          {:ok, png_binary} <- decode_base64_field(response, :dft) do
       {:ok, {:binary, png_binary}}
     else

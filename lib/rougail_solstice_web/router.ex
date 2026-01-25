@@ -17,8 +17,17 @@ defmodule RougailSolsticeWeb.Router do
   scope "/", RougailSolsticeWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", SessionsLive.Index, :index
+
+    live "/optical-pieces", OpticalPiecesLive.Index, :index
+    live "/optical-pieces/new", OpticalPiecesLive.Index, :new
+    live "/optical-pieces/:id/edit", OpticalPiecesLive.Index, :edit
+
+    live "/sessions/:session_id/robot", SessionRobotLive
+
+    get "/sessions/:session_id/images/:key", ImageController, :show_session
     get "/images/:key", ImageController, :show
+
     live "/robot", RobotLive
   end
 

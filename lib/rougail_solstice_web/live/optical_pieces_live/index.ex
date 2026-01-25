@@ -1,0 +1,275 @@
+defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
+  use RougailSolsticeWeb, :live_view
+
+  alias RougailSolstice.OpticalPieces
+  alias RougailSolstice.OpticalPieces.OpticalPiece
+  alias RougailSolstice.Robot.CameraAdapter.Canon
+
+  @impl true
+  def mount(_params, _session, socket) do
+    {:ok,
+     socket
+     |> assign(:optical_pieces, OpticalPieces.list_optical_pieces())
+     |> assign(:detected_cameras, [])}
+  end
+
+  @impl true
+  def handle_params(params, _url, socket) do
+    {:noreply, apply_action(socket, socket.assigns.live_action, params)}
+  end
+
+  defp apply_action(socket, :index, _params) do
+    socket
+    |> assign(:page_title, "Optical Pieces")
+    |> assign(:optical_piece, nil)
+    |> assign(:form, nil)
+  end
+
+  defp apply_action(socket, :new, _params) do
+    optical_piece = %OpticalPiece{}
+    changeset = OpticalPieces.change_optical_piece(optical_piece)
+
+    socket
+    |> assign(:page_title, "New Optical Piece")
+    |> assign(:optical_piece, optical_piece)
+    |> assign(:form, to_form(changeset))
+  end
+
+  defp apply_action(socket, :edit, %{"id" => id}) do
+    optical_piece = OpticalPieces.get_optical_piece!(id)
+    changeset = OpticalPieces.change_optical_piece(optical_piece)
+
+    socket
+    |> assign(:page_title, "Edit #{optical_piece.name}")
+    |> assign(:optical_piece, optical_piece)
+    |> assign(:form, to_form(changeset))
+  end
+
+  @impl true
+  def handle_event("delete", %{"id" => id}, socket) do
+    optical_piece = OpticalPieces.get_optical_piece!(id)
+    {:ok, _} = OpticalPieces.delete_optical_piece(optical_piece)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Optical piece deleted")
+     |> assign(:optical_pieces, OpticalPieces.list_optical_pieces())}
+  end
+
+  def handle_event("detect_cameras", _params, socket) do
+    cameras =
+      case Canon.detect_cameras() do
+        {:ok, cameras} -> cameras
+        {:error, _} -> []
+      end
+
+    {:noreply, assign(socket, :detected_cameras, cameras)}
+  end
+
+  def handle_event("validate", %{"optical_piece" => params}, socket) do
+    changeset =
+      socket.assigns.optical_piece
+      |> OpticalPieces.change_optical_piece(params)
+      |> Map.put(:action, :validate)
+
+    {:noreply, assign(socket, :form, to_form(changeset))}
+  end
+
+  def handle_event("save", %{"optical_piece" => params}, socket) do
+    save_optical_piece(socket, socket.assigns.live_action, params)
+  end
+
+  defp save_optical_piece(socket, :new, params) do
+    case OpticalPieces.create_optical_piece(params) do
+      {:ok, _optical_piece} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Optical piece created")
+         |> push_navigate(to: ~p"/optical-pieces")}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:noreply, assign(socket, :form, to_form(changeset))}
+    end
+  end
+
+  defp save_optical_piece(socket, :edit, params) do
+    case OpticalPieces.update_optical_piece(socket.assigns.optical_piece, params) do
+      {:ok, _optical_piece} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Optical piece updated")
+         |> push_navigate(to: ~p"/optical-pieces")}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:noreply, assign(socket, :form, to_form(changeset))}
+    end
+  end
+
+  @impl true
+  def render(assigns) do
+    ~H"""
+    <div class="max-w-4xl mx-auto p-6">
+      <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold"><%= @page_title %></h1>
+        <div class="flex gap-2">
+          <.link navigate={~p"/"} class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">
+            Back to Sessions
+          </.link>
+          <%= if @live_action == :index do %>
+            <.link
+              navigate={~p"/optical-pieces/new"}
+              class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+              New Optical Piece
+            </.link>
+          <% end %>
+        </div>
+      </div>
+
+      <%= if @live_action in [:new, :edit] do %>
+        <div class="bg-white border rounded p-6 mb-6">
+          <.form_component
+            form={@form}
+            action={@live_action}
+            detected_cameras={@detected_cameras}
+          />
+        </div>
+      <% else %>
+        <div class="space-y-2">
+          <%= for op <- @optical_pieces do %>
+            <div class="flex items-center justify-between bg-white border rounded p-4">
+              <div>
+                <div class="font-medium text-lg"><%= op.name %></div>
+                <div class="text-sm text-gray-600">
+                  Diameter: <%= op.diameter %>mm | RoC: <%= op.roc %>mm | λ: <%= op.lambda %>nm
+                </div>
+                <div class="text-sm text-gray-600">
+                  Conic: <%= op.conic %> | Obstruction: <%= Float.round(op.obstruction * 100, 1) %>%
+                </div>
+                <%= if op.camera_port do %>
+                  <div class="text-sm text-gray-600">
+                    Camera: <%= op.camera_model || "Unknown" %> @ <%= op.camera_port %>
+                  </div>
+                <% else %>
+                  <div class="text-sm text-gray-400 italic">No camera assigned</div>
+                <% end %>
+                <%= if op.notes do %>
+                  <div class="text-sm text-gray-500 mt-1"><%= op.notes %></div>
+                <% end %>
+              </div>
+              <div class="flex gap-2">
+                <.link
+                  navigate={~p"/optical-pieces/#{op.id}/edit"}
+                  class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300"
+                >
+                  Edit
+                </.link>
+                <button
+                  phx-click="delete"
+                  phx-value-id={op.id}
+                  data-confirm="Are you sure you want to delete this optical piece?"
+                  class="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          <% end %>
+
+          <%= if @optical_pieces == [] do %>
+            <p class="text-gray-500 italic text-center py-8">
+              No optical pieces configured yet.
+            </p>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp form_component(assigns) do
+    ~H"""
+    <.form for={@form} phx-change="validate" phx-submit="save" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Name</label>
+        <.input type="text" field={@form[:name]} required />
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">Diameter (mm)</label>
+          <.input type="number" field={@form[:diameter]} step="0.1" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Radius of Curvature (mm)</label>
+          <.input type="number" field={@form[:roc]} step="0.1" required />
+        </div>
+      </div>
+
+      <div class="grid grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">Wavelength (nm)</label>
+          <.input type="number" field={@form[:lambda]} step="0.1" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Conic</label>
+          <.input type="number" field={@form[:conic]} step="0.01" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Obstruction (0-1)</label>
+          <.input type="number" field={@form[:obstruction]} step="0.01" />
+        </div>
+      </div>
+
+      <div class="border-t pt-4 mt-4">
+        <div class="flex justify-between items-center mb-2">
+          <h3 class="font-medium">Camera Assignment</h3>
+          <button
+            type="button"
+            phx-click="detect_cameras"
+            class="text-sm px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
+          >
+            Detect Cameras
+          </button>
+        </div>
+
+        <%= if @detected_cameras != [] do %>
+          <div class="mb-2 text-sm text-gray-600">
+            Detected cameras:
+            <ul class="list-disc ml-4">
+              <%= for cam <- @detected_cameras do %>
+                <li><%= cam.model %> @ <%= cam.port %></li>
+              <% end %>
+            </ul>
+          </div>
+        <% end %>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium mb-1">Camera Port (e.g. usb:001,006)</label>
+            <.input type="text" field={@form[:camera_port]} />
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Camera Model</label>
+            <.input type="text" field={@form[:camera_model]} />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium mb-1">Notes</label>
+        <.input type="textarea" field={@form[:notes]} />
+      </div>
+
+      <div class="flex gap-2 pt-4">
+        <button type="submit" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+          Save
+        </button>
+        <.link navigate={~p"/optical-pieces"} class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">
+          Cancel
+        </.link>
+      </div>
+    </.form>
+    """
+  end
+end

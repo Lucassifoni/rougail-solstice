@@ -2,18 +2,21 @@ defmodule RougailSolstice.Robot.Server do
   @moduledoc """
   GenServer holding robot state.
   Broadcasts state changes via PubSub.
+  Supports session-scoped operation with optional session_id.
   """
 
   use GenServer
 
   alias RougailSolstice.Robot.State
+  alias RougailSolstice.Sessions.Topics
 
   @pubsub RougailSolstice.PubSub
-  @topic "robot:state"
+
+  defstruct [:robot_state, :session_id, :image_store]
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
-    init_opts = Keyword.take(opts, [:config, :adapter])
+    init_opts = Keyword.take(opts, [:config, :adapter, :session_id, :image_store])
     GenServer.start_link(__MODULE__, init_opts, name: name)
   end
 
@@ -49,16 +52,18 @@ defmodule RougailSolstice.Robot.Server do
     GenServer.call(server, {:set_adapter, adapter})
   end
 
-  def subscribe do
-    Phoenix.PubSub.subscribe(@pubsub, @topic)
+  def subscribe(session_id \\ nil) do
+    Phoenix.PubSub.subscribe(@pubsub, Topics.robot(session_id))
   end
 
-  def topic, do: @topic
+  def topic(session_id \\ nil), do: Topics.robot(session_id)
 
   @impl true
   def init(opts) do
     config = Keyword.get(opts, :config, %{})
     adapter = Keyword.get(opts, :adapter)
+    session_id = Keyword.get(opts, :session_id)
+    image_store = Keyword.get(opts, :image_store)
 
     result =
       if adapter do
@@ -68,21 +73,25 @@ defmodule RougailSolstice.Robot.Server do
       end
 
     case result do
-      {:ok, state} -> {:ok, state}
-      {:error, reason} -> {:stop, reason}
+      {:ok, robot_state} ->
+        {:ok, %__MODULE__{robot_state: robot_state, session_id: session_id, image_store: image_store}}
+
+      {:error, reason} ->
+        {:stop, reason}
     end
   end
 
   @impl true
   def handle_call(:get_state, _from, state) do
-    {:reply, state, state}
+    {:reply, state.robot_state, state}
   end
 
   def handle_call({:move_axis, axis, delta}, _from, state) do
-    case State.move_axis(state, axis, delta) do
-      {:ok, new_state} ->
+    case State.move_axis(state.robot_state, axis, delta) do
+      {:ok, new_robot_state} ->
+        new_state = %{state | robot_state: new_robot_state}
         broadcast(new_state)
-        {:reply, {:ok, new_state}, new_state}
+        {:reply, {:ok, new_robot_state}, new_state}
 
       {:error, _} = error ->
         {:reply, error, state}
@@ -90,10 +99,11 @@ defmodule RougailSolstice.Robot.Server do
   end
 
   def handle_call({:set_axis_position, axis, position}, _from, state) do
-    case State.set_axis_position(state, axis, position) do
-      {:ok, new_state} ->
+    case State.set_axis_position(state.robot_state, axis, position) do
+      {:ok, new_robot_state} ->
+        new_state = %{state | robot_state: new_robot_state}
         broadcast(new_state)
-        {:reply, {:ok, new_state}, new_state}
+        {:reply, {:ok, new_robot_state}, new_state}
 
       {:error, _} = error ->
         {:reply, error, state}
@@ -101,10 +111,11 @@ defmodule RougailSolstice.Robot.Server do
   end
 
   def handle_call(:lock_camera, _from, state) do
-    case State.lock_camera(state) do
-      {:ok, new_state} ->
+    case State.lock_camera(state.robot_state) do
+      {:ok, new_robot_state} ->
+        new_state = %{state | robot_state: new_robot_state}
         broadcast(new_state)
-        {:reply, {:ok, new_state}, new_state}
+        {:reply, {:ok, new_robot_state}, new_state}
 
       {:error, _} = error ->
         {:reply, error, state}
@@ -112,10 +123,11 @@ defmodule RougailSolstice.Robot.Server do
   end
 
   def handle_call(:take_picture, _from, state) do
-    case State.take_picture(state) do
-      {:ok, new_state, capture} ->
+    case State.take_picture(state.robot_state) do
+      {:ok, new_robot_state, capture} ->
+        new_state = %{state | robot_state: new_robot_state}
         broadcast(new_state)
-        {:reply, {:ok, new_state, capture}, new_state}
+        {:reply, {:ok, new_robot_state, capture}, new_state}
 
       {:error, _} = error ->
         {:reply, error, state}
@@ -123,10 +135,11 @@ defmodule RougailSolstice.Robot.Server do
   end
 
   def handle_call(:release_camera, _from, state) do
-    case State.release_camera(state) do
-      {:ok, new_state} ->
+    case State.release_camera(state.robot_state) do
+      {:ok, new_robot_state} ->
+        new_state = %{state | robot_state: new_robot_state}
         broadcast(new_state)
-        {:reply, {:ok, new_state}, new_state}
+        {:reply, {:ok, new_robot_state}, new_state}
 
       {:error, _} = error ->
         {:reply, error, state}
@@ -134,18 +147,21 @@ defmodule RougailSolstice.Robot.Server do
   end
 
   def handle_call(:reset, _from, state) do
-    {:ok, new_state} = State.new(%{}, state.camera_adapter)
+    {:ok, new_robot_state} = State.new(%{}, state.robot_state.camera_adapter)
+    new_state = %{state | robot_state: new_robot_state}
     broadcast(new_state)
     {:reply, :ok, new_state}
   end
 
   def handle_call({:set_adapter, adapter}, _from, state) do
-    new_state = %{state | camera_adapter: adapter}
+    new_robot_state = %{state.robot_state | camera_adapter: adapter}
+    new_state = %{state | robot_state: new_robot_state}
     broadcast(new_state)
-    {:reply, {:ok, new_state}, new_state}
+    {:reply, {:ok, new_robot_state}, new_state}
   end
 
   defp broadcast(state) do
-    Phoenix.PubSub.broadcast(@pubsub, @topic, {:robot_state_changed, state})
+    topic = Topics.robot(state.session_id)
+    Phoenix.PubSub.broadcast(@pubsub, topic, {:robot_state_changed, state.robot_state})
   end
 end

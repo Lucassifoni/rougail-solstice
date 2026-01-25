@@ -3,6 +3,7 @@ defmodule RougailSolstice.Outline.Server do
   GenServer managing automatic outline detection.
   Subscribes to interferometry state changes and runs circle detection
   on a rolling window of preview frames.
+  Supports session-scoped operation with optional session_id.
   """
 
   use GenServer
@@ -13,9 +14,9 @@ defmodule RougailSolstice.Outline.Server do
   alias RougailSolstice.Interferometry.Server, as: InterfServer
   alias RougailSolstice.Outline.Detection
   alias RougailSolstice.Outline.State
+  alias RougailSolstice.Sessions.Topics
 
   @pubsub RougailSolstice.PubSub
-  @interferometry_topic "interferometry:state"
   @process_interval_ms 200
 
   def start_link(opts \\ []) do
@@ -55,13 +56,20 @@ defmodule RougailSolstice.Outline.Server do
 
   @impl true
   def init(opts) do
-    Phoenix.PubSub.subscribe(@pubsub, @interferometry_topic)
+    session_id = Keyword.get(opts, :session_id)
+    interf_server = Keyword.get(opts, :interf_server, InterfServer)
+    image_store = Keyword.get(opts, :image_store, ImageStore)
+
+    Phoenix.PubSub.subscribe(@pubsub, Topics.interferometry(session_id))
 
     state = State.new(opts)
 
     {:ok,
      %{
        state: state,
+       session_id: session_id,
+       interf_server: interf_server,
+       image_store: image_store,
        pending_detection: false,
        last_process_time: now() - @process_interval_ms,
        last_preview_path: nil
@@ -140,7 +148,7 @@ defmodule RougailSolstice.Outline.Server do
       "[OutlineServer] Circle detected: cx=#{round(result.circle.cx)}, cy=#{round(result.circle.cy)}, r=#{round(result.circle.r)} (confidence: #{Float.round(result.confidence, 2)}, method: #{result.method})"
     )
 
-    update_interferometry_circle(result.circle)
+    update_interferometry_circle(server_state, result.circle)
     new_state = State.set_detection(server_state.state, Map.put(result, :detected_at, now()))
     {:noreply, %{server_state | state: new_state, last_process_time: now()}}
   end
@@ -158,7 +166,7 @@ defmodule RougailSolstice.Outline.Server do
     preview_path = interf_state.preview_frame_path
 
     if preview_path && preview_path != server_state.last_preview_path do
-      case fetch_frame_binary(preview_path, interf_state.preview_dimensions) do
+      case fetch_frame_binary(preview_path, interf_state.preview_dimensions, server_state.image_store) do
         {:ok, binary, dims} ->
           frame = %{
             binary: binary,
@@ -185,29 +193,41 @@ defmodule RougailSolstice.Outline.Server do
     end
   end
 
-  defp fetch_frame_binary("/images/" <> key, dims) do
-    case ImageStore.get(key) do
-      %{binary: binary} when binary != nil ->
-        actual_dims = dims || {640, 480}
-        {:ok, binary, actual_dims}
+  defp fetch_frame_binary(url, dims, image_store) when is_binary(url) do
+    case extract_image_key(url) do
+      {:ok, key} ->
+        case ImageStore.get(image_store, key) do
+          %{binary: binary} when binary != nil ->
+            actual_dims = dims || {640, 480}
+            {:ok, binary, actual_dims}
 
-      _ ->
-        {:error, :not_found}
+          _ ->
+            {:error, :not_found}
+        end
+
+      :error ->
+        case File.read(url) do
+          {:ok, binary} ->
+            actual_dims = dims || get_file_dimensions(url) || {640, 480}
+            {:ok, binary, actual_dims}
+
+          error ->
+            error
+        end
     end
   end
 
-  defp fetch_frame_binary(path, dims) when is_binary(path) do
-    case File.read(path) do
-      {:ok, binary} ->
-        actual_dims = dims || get_file_dimensions(path) || {640, 480}
-        {:ok, binary, actual_dims}
+  defp fetch_frame_binary(_, _, _), do: {:error, :invalid_path}
 
-      error ->
-        error
+  defp extract_image_key("/sessions/" <> rest) do
+    case String.split(rest, "/images/", parts: 2) do
+      [_session_id, key] -> {:ok, key}
+      _ -> :error
     end
   end
 
-  defp fetch_frame_binary(_, _), do: {:error, :invalid_path}
+  defp extract_image_key("/images/" <> key), do: {:ok, key}
+  defp extract_image_key(_), do: :error
 
   defp get_file_dimensions(path) do
     case System.cmd("identify", ["-format", "%wx%h", path], stderr_to_stdout: true) do
@@ -274,12 +294,12 @@ defmodule RougailSolstice.Outline.Server do
     end
   end
 
-  defp update_interferometry_circle(circle) do
-    InterfServer.set_outline_circle(circle)
+  defp update_interferometry_circle(server_state, circle) do
+    InterfServer.set_outline_circle(server_state.interf_server, circle)
   end
 
   defp maybe_capture_current_frame(server_state) do
-    interf_state = InterfServer.get_state()
+    interf_state = InterfServer.get_state(server_state.interf_server)
 
     if interf_state.liveview_active do
       Logger.debug("[OutlineServer] Liveview active, capturing current frame immediately")

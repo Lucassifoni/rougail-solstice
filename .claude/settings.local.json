@@ -10,7 +10,8 @@
       "Bash(mix format:*)",
       "Bash(mix compile:*)",
       "Bash(grep:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(mix ecto.migrate:*)"
     ]
   }
 }

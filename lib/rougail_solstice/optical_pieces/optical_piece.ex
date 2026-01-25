@@ -1,6 +1,6 @@
-defmodule RougailSolstice.Interferometry.Config do
+defmodule RougailSolstice.OpticalPieces.OpticalPiece do
   @moduledoc """
-  Ecto schema for interferometry optical configurations.
+  Ecto schema for optical pieces (telescope configurations with camera assignment).
   """
 
   use Ecto.Schema
@@ -15,6 +15,9 @@ defmodule RougailSolstice.Interferometry.Config do
           conic: float(),
           obstruction: float(),
           is_default: boolean(),
+          camera_port: String.t() | nil,
+          camera_model: String.t() | nil,
+          notes: String.t() | nil,
           inserted_at: NaiveDateTime.t() | nil,
           updated_at: NaiveDateTime.t() | nil
         }
@@ -27,16 +30,19 @@ defmodule RougailSolstice.Interferometry.Config do
     field :conic, :float, default: -1.0
     field :obstruction, :float, default: 0.0
     field :is_default, :boolean, default: false
+    field :camera_port, :string
+    field :camera_model, :string
+    field :notes, :string
 
     timestamps()
   end
 
   @required_fields [:name, :diameter, :roc]
-  @optional_fields [:lambda, :conic, :obstruction, :is_default]
+  @optional_fields [:lambda, :conic, :obstruction, :is_default, :camera_port, :camera_model, :notes]
 
   @spec changeset(t() | Ecto.Changeset.t(), map()) :: Ecto.Changeset.t()
-  def changeset(config, attrs) do
-    config
+  def changeset(optical_piece, attrs) do
+    optical_piece
     |> cast(attrs, @required_fields ++ @optional_fields)
     |> validate_required(@required_fields)
     |> validate_number(:diameter, greater_than: 0)

@@ -2,26 +2,42 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
   @moduledoc """
   Canon camera adapter using gphoto2.
   Requires gphoto2 to be installed on the system.
+
+  Can be used as a module (selects first available camera) or as a struct
+  with a specific port for multi-camera setups.
   """
 
   @behaviour RougailSolstice.Robot.CameraAdapter
+
+  defstruct [:port, :model]
+
+  @type t :: %__MODULE__{
+          port: String.t() | nil,
+          model: String.t() | nil
+        }
 
   @gphoto2 "gphoto2"
   @capture_dir Application.compile_env(:rougail_solstice, :capture_dir, "/tmp/captures")
   @preview_path "/tmp/preview.jpg"
 
   @impl true
-  def capture do
+  def capture, do: do_capture(nil)
+
+  def capture(%__MODULE__{port: port}), do: do_capture(port)
+
+  defp do_capture(port) do
     ensure_capture_dir()
     timestamp = DateTime.utc_now() |> DateTime.to_unix()
     filename = Path.join(@capture_dir, "capture_#{timestamp}.jpg")
 
-    args = [
+    base_args = [
       "--capture-image-and-download",
       "--filename",
       filename,
       "--force-overwrite"
     ]
+
+    args = add_port_args(base_args, port)
 
     case System.cmd(@gphoto2, args, stderr_to_stdout: true) do
       {_, 0} -> {:ok, filename}
@@ -30,13 +46,19 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
   end
 
   @impl true
-  def capture_preview do
-    args = [
+  def capture_preview, do: do_capture_preview(nil)
+
+  def capture_preview(%__MODULE__{port: port}), do: do_capture_preview(port)
+
+  defp do_capture_preview(port) do
+    base_args = [
       "--capture-preview",
       "--filename",
       @preview_path,
       "--force-overwrite"
     ]
+
+    args = add_port_args(base_args, port)
 
     case System.cmd(@gphoto2, args, stderr_to_stdout: true) do
       {_, 0} -> {:ok, @preview_path}
@@ -46,6 +68,17 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
 
   @impl true
   def name, do: "Canon (gphoto2)"
+
+  def name(%__MODULE__{model: nil, port: port}), do: "Canon @ #{port}"
+  def name(%__MODULE__{model: model}), do: model
+
+  @spec detect_cameras() :: {:ok, [t()]} | {:error, term()}
+  def detect_cameras do
+    case System.cmd(@gphoto2, ["--auto-detect"], stderr_to_stdout: true) do
+      {output, 0} -> {:ok, parse_cameras_to_structs(output)}
+      {output, code} -> {:error, {:gphoto2_error, code, output}}
+    end
+  end
 
   def detect do
     case System.cmd(@gphoto2, ["--auto-detect"], stderr_to_stdout: true) do
@@ -61,26 +94,38 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
     end
   end
 
-  def set_config(key, value) do
-    case System.cmd(@gphoto2, ["--set-config", "#{key}=#{value}"], stderr_to_stdout: true) do
+  def set_config(key, value, port \\ nil) do
+    base_args = ["--set-config", "#{key}=#{value}"]
+    args = add_port_args(base_args, port)
+
+    case System.cmd(@gphoto2, args, stderr_to_stdout: true) do
       {_, 0} -> :ok
       {output, code} -> {:error, {:gphoto2_error, code, output}}
     end
   end
 
-  def get_config(key) do
-    case System.cmd(@gphoto2, ["--get-config", key], stderr_to_stdout: true) do
+  def get_config(key, port \\ nil) do
+    base_args = ["--get-config", key]
+    args = add_port_args(base_args, port)
+
+    case System.cmd(@gphoto2, args, stderr_to_stdout: true) do
       {output, 0} -> {:ok, parse_config(output)}
       {output, code} -> {:error, {:gphoto2_error, code, output}}
     end
   end
 
-  def list_config do
-    case System.cmd(@gphoto2, ["--list-config"], stderr_to_stdout: true) do
+  def list_config(port \\ nil) do
+    base_args = ["--list-config"]
+    args = add_port_args(base_args, port)
+
+    case System.cmd(@gphoto2, args, stderr_to_stdout: true) do
       {output, 0} -> {:ok, String.split(output, "\n", trim: true)}
       {output, code} -> {:error, {:gphoto2_error, code, output}}
     end
   end
+
+  defp add_port_args(args, nil), do: args
+  defp add_port_args(args, port), do: ["--port", port | args]
 
   defp ensure_capture_dir do
     File.mkdir_p!(@capture_dir)
@@ -92,6 +137,26 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
     |> Enum.drop(2)
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == ""))
+  end
+
+  defp parse_cameras_to_structs(output) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.drop(2)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(&parse_camera_line/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp parse_camera_line(line) do
+    case Regex.run(~r/^(.+?)\s+(usb:\d+,\d+)$/, line) do
+      [_, model, port] ->
+        %__MODULE__{port: port, model: String.trim(model)}
+
+      _ ->
+        nil
+    end
   end
 
   defp parse_config(output) do

@@ -7,8 +7,6 @@ defmodule RougailSolstice.Robot.CameraAdapter.Virtual do
 
   require Logger
 
-  alias RougailSolstice.ImageStore
-
   @behaviour RougailSolstice.Robot.CameraAdapter
 
   @samples_dir Application.compile_env(
@@ -41,30 +39,25 @@ defmodule RougailSolstice.Robot.CameraAdapter.Virtual do
     result
   end
 
-  @preview_key_prefix "virtual_preview_"
+  @preview_path "/tmp/virtual_preview.jpg"
 
   @impl true
   def capture_preview do
     Logger.debug("[VirtualCamera] capture_preview() called")
-    ImageStore.delete_prefix(@preview_key_prefix)
-    preview_key = "#{@preview_key_prefix}#{System.unique_integer([:positive])}"
 
     result =
       case find_sample_image("preview") do
         {:ok, sample} ->
-          binary = File.read!(sample)
-          content_type = content_type_for(sample)
-          dims = get_file_dimensions(sample)
-          ImageStore.put(preview_key, binary, content_type: content_type, dimensions: dims)
-          {:ok, ImageStore.url(preview_key)}
+          File.cp!(sample, @preview_path)
+          {:ok, @preview_path}
 
         :none ->
-          generate_preview_to_store(preview_key, 640, 480)
+          generate_test_image_to_file(@preview_path, 640, 480)
       end
 
     case result do
-      {:ok, url} ->
-        Logger.debug("[VirtualCamera] capture_preview() -> ok: #{url}")
+      {:ok, path} ->
+        Logger.debug("[VirtualCamera] capture_preview() -> ok: #{path}")
 
       {:error, reason} ->
         Logger.warning("[VirtualCamera] capture_preview() failed: #{inspect(reason)}")
@@ -101,45 +94,6 @@ defmodule RougailSolstice.Robot.CameraAdapter.Virtual do
     case System.cmd("convert", args, stderr_to_stdout: true) do
       {_, 0} -> {:ok, output_path}
       {output, code} -> {:error, {:convert_failed, code, output}}
-    end
-  end
-
-  defp generate_preview_to_store(preview_key, width, height) do
-    args = ["-size", "#{width}x#{height}", "plasma:gray50-gray80", "jpeg:-"]
-
-    case System.cmd("convert", args, stderr_to_stdout: true) do
-      {binary, 0} ->
-        ImageStore.put(preview_key, binary,
-          content_type: "image/jpeg",
-          dimensions: {width, height}
-        )
-
-        {:ok, ImageStore.url(preview_key)}
-
-      {output, code} ->
-        {:error, {:convert_failed, code, output}}
-    end
-  end
-
-  defp get_file_dimensions(path) do
-    case System.cmd("identify", ["-format", "%wx%h", path], stderr_to_stdout: true) do
-      {output, 0} ->
-        case String.split(String.trim(output), "x") do
-          [w, h] -> {String.to_integer(w), String.to_integer(h)}
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp content_type_for(path) do
-    case Path.extname(path) |> String.downcase() do
-      ".jpg" -> "image/jpeg"
-      ".jpeg" -> "image/jpeg"
-      ".png" -> "image/png"
-      _ -> "image/jpeg"
     end
   end
 

@@ -2,21 +2,25 @@ defmodule RougailSolstice.Interferometry.Server do
   @moduledoc """
   GenServer managing interferometry session state.
   Handles periodic preview capture, DFT preview generation, and analysis triggers.
+  Supports session-scoped operation with optional session_id.
   """
 
   use GenServer
 
   require Logger
 
+  alias RougailSolstice.ImageStore
   alias RougailSolstice.Interferometry.CLI
   alias RougailSolstice.Interferometry.State
   alias RougailSolstice.Interferometry.WFT.Nx, as: WFT
+  alias RougailSolstice.OpticalPieces
   alias RougailSolstice.Robot.Server, as: RobotServer
+  alias RougailSolstice.Sessions.Topics
 
   @pubsub RougailSolstice.PubSub
-  @topic "interferometry:state"
-  @dft_pool_topic "dft_pool:results"
   @preview_interval 200
+
+  defstruct [:interf_state, :session_id, :robot_server, :image_store, :optical_piece]
 
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -69,37 +73,57 @@ defmodule RougailSolstice.Interferometry.Server do
     GenServer.call(server, :reset)
   end
 
-  @spec subscribe() :: :ok | {:error, term()}
-  def subscribe do
-    Phoenix.PubSub.subscribe(@pubsub, @topic)
+  @spec subscribe(integer() | nil) :: :ok | {:error, term()}
+  def subscribe(session_id \\ nil) do
+    Phoenix.PubSub.subscribe(@pubsub, Topics.interferometry(session_id))
   end
 
-  @spec topic() :: String.t()
-  def topic, do: @topic
+  @spec topic(integer() | nil) :: String.t()
+  def topic(session_id \\ nil), do: Topics.interferometry(session_id)
 
   @impl true
-  def init(_opts) do
-    if CLI.dft_backend() == :pool do
-      Phoenix.PubSub.subscribe(@pubsub, @dft_pool_topic)
-    end
+  def init(opts) do
+    session_id = Keyword.get(opts, :session_id)
+    robot_server = Keyword.get(opts, :robot_server, RobotServer)
+    image_store = Keyword.get(opts, :image_store, ImageStore)
+    optical_piece = Keyword.get(opts, :optical_piece)
 
-    {:ok, State.new()}
+    interf_state = State.new()
+
+    interf_state =
+      if optical_piece do
+        params = OpticalPieces.to_optical_params(optical_piece)
+        State.set_optical_params(interf_state, params)
+      else
+        interf_state
+      end
+
+    {:ok,
+     %__MODULE__{
+       interf_state: interf_state,
+       session_id: session_id,
+       robot_server: robot_server,
+       image_store: image_store,
+       optical_piece: optical_piece
+     }}
   end
 
   @impl true
-  def handle_call(:get_state, _from, state), do: {:reply, state, state}
+  def handle_call(:get_state, _from, state), do: {:reply, state.interf_state, state}
 
   def handle_call({:set_outline_circle, circle}, _from, state) do
-    new_state = State.set_outline_circle(state, circle)
+    new_interf = State.set_outline_circle(state.interf_state, circle)
+    new_state = %{state | interf_state: new_interf}
     broadcast(new_state)
-    {:reply, {:ok, new_state}, new_state}
+    {:reply, {:ok, new_interf}, new_state}
   end
 
   def handle_call({:set_center_filter_radius, radius}, _from, state) do
-    case State.set_center_filter_radius(state, radius) do
-      {:ok, new_state} ->
+    case State.set_center_filter_radius(state.interf_state, radius) do
+      {:ok, new_interf} ->
+        new_state = %{state | interf_state: new_interf}
         broadcast(new_state)
-        {:reply, {:ok, new_state}, new_state}
+        {:reply, {:ok, new_interf}, new_state}
 
       {:error, _} = error ->
         {:reply, error, state}
@@ -107,25 +131,20 @@ defmodule RougailSolstice.Interferometry.Server do
   end
 
   def handle_call({:load_optical_config, config_id}, _from, state) do
-    config = RougailSolstice.Interferometry.get_config!(config_id)
+    optical_piece = OpticalPieces.get_optical_piece!(config_id)
+    params = OpticalPieces.to_optical_params(optical_piece)
 
-    params = %{
-      diameter: config.diameter,
-      roc: config.roc,
-      lambda: config.lambda,
-      conic: config.conic,
-      obstruction: config.obstruction
-    }
-
-    new_state = State.set_optical_params(state, params)
+    new_interf = State.set_optical_params(state.interf_state, params)
+    new_state = %{state | interf_state: new_interf, optical_piece: optical_piece}
     broadcast(new_state)
-    {:reply, {:ok, new_state}, new_state}
+    {:reply, {:ok, new_interf}, new_state}
   end
 
   def handle_call({:set_optical_params, params}, _from, state) do
-    new_state = State.set_optical_params(state, params)
+    new_interf = State.set_optical_params(state.interf_state, params)
+    new_state = %{state | interf_state: new_interf}
     broadcast(new_state)
-    {:reply, {:ok, new_state}, new_state}
+    {:reply, {:ok, new_interf}, new_state}
   end
 
   def handle_call(:start_liveview, _from, state) do
@@ -133,29 +152,32 @@ defmodule RougailSolstice.Interferometry.Server do
       "[InterfServer] start_liveview called, scheduling preview capture every #{@preview_interval}ms"
     )
 
-    new_state = State.start_liveview(state)
+    new_interf = State.start_liveview(state.interf_state)
+    new_state = %{state | interf_state: new_interf}
     schedule_preview_capture()
     broadcast(new_state)
-    {:reply, {:ok, new_state}, new_state}
+    {:reply, {:ok, new_interf}, new_state}
   end
 
   def handle_call(:stop_liveview, _from, state) do
-    new_state = State.stop_liveview(state)
+    new_interf = State.stop_liveview(state.interf_state)
+    new_state = %{state | interf_state: new_interf}
     broadcast(new_state)
-    {:reply, {:ok, new_state}, new_state}
+    {:reply, {:ok, new_interf}, new_state}
   end
 
   def handle_call(:capture_full_shot, _from, state) do
-    robot_state = RobotServer.get_state()
+    robot_state = RobotServer.get_state(state.robot_server)
 
     case robot_state.camera_adapter.capture() do
-      {:ok, image_path} ->
-        case get_image_dimensions(image_path) do
-          {:ok, dims} ->
-            new_state = State.set_full_shot(state, image_path, dims)
+      {:ok, file_path} ->
+        case store_full_shot_in_session(file_path, state) do
+          {:ok, url, dims} ->
+            new_interf = State.set_full_shot(state.interf_state, url, dims)
+            new_state = %{state | interf_state: new_interf}
             broadcast(new_state)
             final_state = run_analysis_if_ready(new_state)
-            {:reply, {:ok, final_state}, final_state}
+            {:reply, {:ok, final_state.interf_state}, final_state}
 
           {:error, _} = error ->
             {:reply, error, state}
@@ -166,15 +188,16 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
-  def handle_call(:reset, _from, _state) do
-    new_state = State.new()
+  def handle_call(:reset, _from, state) do
+    new_interf = State.new()
+    new_state = %{state | interf_state: new_interf}
     broadcast(new_state)
-    {:reply, {:ok, new_state}, new_state}
+    {:reply, {:ok, new_interf}, new_state}
   end
 
   @impl true
   def handle_info(:capture_preview, state) do
-    if state.liveview_active do
+    if state.interf_state.liveview_active do
       Logger.debug("[InterfServer] capture_preview tick - liveview active")
       new_state = capture_and_process_preview(state)
       schedule_preview_capture()
@@ -185,37 +208,20 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
-  def handle_info({:dft_preview_result, {:ok, png_binary, metadata}}, state) do
-    latency = System.monotonic_time(:millisecond) - metadata.submitted_at
-    Logger.debug("[InterfServer] DFT pool result received, latency=#{latency}ms")
-
-    key = "dft_preview_#{System.unique_integer([:positive])}"
-    RougailSolstice.ImageStore.delete_prefix("dft_preview_")
-    RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
-    dft_url = RougailSolstice.ImageStore.url(key)
-
-    new_state = State.set_dft_preview(state, dft_url)
-    broadcast(new_state)
-    {:noreply, new_state}
-  end
-
-  def handle_info({:dft_preview_result, {:error, reason}}, state) do
-    Logger.warning("[InterfServer] DFT pool error: #{inspect(reason)}")
-    {:noreply, state}
-  end
-
   defp capture_and_process_preview(state) do
-    robot_state = RobotServer.get_state()
+    robot_state = RobotServer.get_state(state.robot_server)
 
     case robot_state.camera_adapter.capture_preview() do
-      {:ok, preview_path} ->
-        case get_image_dimensions(preview_path) do
-          {:ok, dims} ->
-            state = State.set_preview_frame(state, preview_path, dims)
-            broadcast(state)
-            process_dft_preview(state)
+      {:ok, file_path} ->
+        case store_preview_in_session(file_path, state) do
+          {:ok, url, dims} ->
+            new_interf = State.set_preview_frame(state.interf_state, url, dims)
+            new_state = %{state | interf_state: new_interf}
+            broadcast(new_state)
+            process_dft_preview(new_state)
 
-          {:error, _} ->
+          {:error, reason} ->
+            Logger.warning("[InterfServer] Failed to store preview: #{inspect(reason)}")
             state
         end
 
@@ -224,37 +230,82 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
+  defp store_preview_in_session(file_path, state) do
+    with {:ok, binary} <- File.read(file_path),
+         {:ok, dims} <- get_file_dimensions(file_path) do
+      preview_key = "preview_#{System.unique_integer([:positive])}"
+      content_type = content_type_for(file_path)
+
+      ImageStore.delete_prefix(state.image_store, "preview_")
+      ImageStore.put(state.image_store, preview_key, binary,
+        content_type: content_type,
+        dimensions: dims
+      )
+
+      url = ImageStore.session_url(state.session_id, preview_key)
+      {:ok, url, dims}
+    end
+  end
+
+  defp store_full_shot_in_session(file_path, state) do
+    with {:ok, binary} <- File.read(file_path),
+         {:ok, dims} <- get_file_dimensions(file_path) do
+      shot_key = "full_shot_#{System.unique_integer([:positive])}"
+      content_type = content_type_for(file_path)
+
+      ImageStore.delete_prefix(state.image_store, "full_shot_")
+      ImageStore.put(state.image_store, shot_key, binary,
+        content_type: content_type,
+        dimensions: dims
+      )
+
+      url = ImageStore.session_url(state.session_id, shot_key)
+      {:ok, url, dims}
+    end
+  end
+
+  defp get_file_dimensions(path) do
+    case System.cmd("identify", ["-format", "%wx%h", path], stderr_to_stdout: true) do
+      {output, 0} ->
+        case String.split(String.trim(output), "x") do
+          [w, h] -> {:ok, {String.to_integer(w), String.to_integer(h)}}
+          _ -> {:error, :invalid_dimensions}
+        end
+
+      _ ->
+        {:error, :identify_failed}
+    end
+  end
+
+  defp content_type_for(path) do
+    case Path.extname(path) |> String.downcase() do
+      ".jpg" -> "image/jpeg"
+      ".jpeg" -> "image/jpeg"
+      ".png" -> "image/png"
+      _ -> "image/jpeg"
+    end
+  end
+
   defp process_dft_preview(state) do
-    if State.ready_for_dft_preview?(state) do
-      case CLI.dft_backend() do
-        :pool ->
-          process_dft_preview_pool(state)
+    interf = state.interf_state
 
-        _sync_backend ->
-          result = process_dft_preview_sync(state)
+    if State.ready_for_dft_preview?(interf) do
+      result = process_dft_preview_sync(state)
 
-          case result do
-            {:ok, dft_url} ->
-              new_state = State.set_dft_preview(state, dft_url)
-              broadcast(new_state)
-              new_state
+      case result do
+        {:ok, dft_url} ->
+          new_interf = State.set_dft_preview(interf, dft_url)
+          new_state = %{state | interf_state: new_interf}
+          broadcast(new_state)
+          new_state
 
-            {:error, reason} ->
-              Logger.warning("[InterfServer] DFT preview failed: #{inspect(reason)}")
-              state
-          end
+        {:error, reason} ->
+          Logger.warning("[InterfServer] DFT preview failed: #{inspect(reason)}")
+          state
       end
     else
       state
     end
-  end
-
-  defp process_dft_preview_pool(state) do
-    with {:ok, image_binary} <- get_preview_binary(state.preview_frame_path) do
-      CLI.dft_preview_async(image_binary, state.outline_circle)
-    end
-
-    state
   end
 
   defp process_dft_preview_sync(state) do
@@ -268,85 +319,110 @@ defmodule RougailSolstice.Interferometry.Server do
         else
           process_dft_preview_file(state)
         end
+
+      :pool ->
+        {:error, :pool_not_supported_in_session_mode}
     end
   end
 
   defp process_dft_preview_binary(state) do
-    with {:ok, image_binary} <- get_preview_binary(state.preview_frame_path),
-         {:ok, {:binary, png_binary}} <- CLI.dft_preview(image_binary, state.outline_circle) do
+    interf = state.interf_state
+    image_store = state.image_store
+
+    with {:ok, image_binary} <- get_preview_binary(interf.preview_frame_path, image_store),
+         {:ok, {:binary, png_binary}} <-
+           CLI.dft_preview(image_binary, interf.outline_circle, session_id: state.session_id) do
       key = "dft_preview_#{System.unique_integer([:positive])}"
-      RougailSolstice.ImageStore.delete_prefix("dft_preview_")
-      RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
-      {:ok, RougailSolstice.ImageStore.url(key)}
+      ImageStore.delete_prefix(image_store, "dft_preview_")
+      ImageStore.put(image_store, key, png_binary, content_type: "image/png")
+      {:ok, ImageStore.session_url(state.session_id, key)}
     end
   end
 
   defp process_dft_preview_file(state) do
-    with {:ok, input_path} <- resolve_preview_to_file(state.preview_frame_path),
+    interf = state.interf_state
+    image_store = state.image_store
+
+    with {:ok, input_path} <- resolve_preview_to_file(interf.preview_frame_path, image_store),
          dft_output =
            Path.join(System.tmp_dir!(), "dft_preview_#{System.unique_integer([:positive])}.png"),
          {:ok, {:file, dft_path}} <-
-           CLI.dft_preview(input_path, state.outline_circle, dft_output),
+           CLI.dft_preview(input_path, interf.outline_circle, dft_output),
          {:ok, binary} <- File.read(dft_path) do
       key = "dft_preview_#{System.unique_integer([:positive])}"
-      RougailSolstice.ImageStore.delete_prefix("dft_preview_")
-      RougailSolstice.ImageStore.put(key, binary, content_type: "image/png")
+      ImageStore.delete_prefix(image_store, "dft_preview_")
+      ImageStore.put(image_store, key, binary, content_type: "image/png")
       File.rm(dft_path)
-      {:ok, RougailSolstice.ImageStore.url(key)}
+      {:ok, ImageStore.session_url(state.session_id, key)}
     end
   end
 
-  defp get_preview_binary("/images/" <> key) do
-    case RougailSolstice.ImageStore.get(key) do
-      %{binary: binary} -> {:ok, binary}
-      nil -> {:error, :preview_not_found}
+  defp get_preview_binary(url, image_store) when is_binary(url) do
+    case extract_image_key(url) do
+      {:ok, key} ->
+        case ImageStore.get(image_store, key) do
+          %{binary: binary} -> {:ok, binary}
+          nil -> {:error, :preview_not_found}
+        end
+
+      :error ->
+        File.read(url)
     end
   end
 
-  defp get_preview_binary(path) when is_binary(path) do
-    File.read(path)
-  end
+  defp resolve_preview_to_file(url, image_store) when is_binary(url) do
+    case extract_image_key(url) do
+      {:ok, key} ->
+        case ImageStore.get(image_store, key) do
+          %{binary: binary} ->
+            temp_path =
+              Path.join(System.tmp_dir!(), "preview_input_#{System.unique_integer([:positive])}.jpg")
 
-  defp resolve_preview_to_file("/images/" <> key) do
-    case RougailSolstice.ImageStore.get(key) do
-      %{binary: binary} ->
-        temp_path =
-          Path.join(System.tmp_dir!(), "preview_input_#{System.unique_integer([:positive])}.jpg")
+            File.write!(temp_path, binary)
+            {:ok, temp_path}
 
-        File.write!(temp_path, binary)
-        {:ok, temp_path}
+          nil ->
+            {:error, :preview_not_found}
+        end
 
-      nil ->
-        {:error, :preview_not_found}
+      :error ->
+        if File.exists?(url), do: {:ok, url}, else: {:error, :file_not_found}
     end
   end
 
-  defp resolve_preview_to_file(path) when is_binary(path) do
-    if File.exists?(path), do: {:ok, path}, else: {:error, :file_not_found}
+  defp extract_image_key("/sessions/" <> rest) do
+    case String.split(rest, "/images/", parts: 2) do
+      [_session_id, key] -> {:ok, key}
+      _ -> :error
+    end
   end
+
+  defp extract_image_key("/images/" <> key), do: {:ok, key}
+  defp extract_image_key(_), do: :error
 
   defp run_analysis_if_ready(state) do
-    ready = State.ready_for_analysis?(state)
+    interf = state.interf_state
+    ready = State.ready_for_analysis?(interf)
     Logger.info("[InterfServer] run_analysis_if_ready: ready=#{ready}")
 
     with true <- ready,
-         {:ok, scaled_circle} <- State.scale_circle_to_full_shot(state) do
+         {:ok, scaled_circle} <- State.scale_circle_to_full_shot(interf) do
       Logger.info("""
       [InterfServer] Running analysis:
-        preview_dimensions: #{inspect(state.preview_dimensions)}
-        full_shot_dimensions: #{inspect(state.full_shot_dimensions)}
-        outline_circle (preview): cx=#{state.outline_circle.cx}, cy=#{state.outline_circle.cy}, r=#{state.outline_circle.r}
+        preview_dimensions: #{inspect(interf.preview_dimensions)}
+        full_shot_dimensions: #{inspect(interf.full_shot_dimensions)}
+        outline_circle (preview): cx=#{interf.outline_circle.cx}, cy=#{interf.outline_circle.cy}, r=#{interf.outline_circle.r}
         scaled_circle (full shot): cx=#{scaled_circle.cx}, cy=#{scaled_circle.cy}, r=#{scaled_circle.r}
       """)
 
-      case run_cli_analysis(state, scaled_circle) do
+      case run_cli_analysis(interf, scaled_circle) do
         {:ok, result} ->
           Logger.info("[InterfServer] Analysis succeeded, rms=#{result.rms_waves}")
-          new_state = State.set_analysis(state, result)
-          new_state = render_wft_preview(new_state, result)
+          new_interf = State.set_analysis(interf, result)
+          {new_interf, new_state} = render_wft_preview(%{state | interf_state: new_interf}, result)
 
           Logger.info(
-            "[InterfServer] After render_wft_preview, wft_preview_path=#{inspect(new_state.wft_preview_path)}"
+            "[InterfServer] After render_wft_preview, wft_preview_path=#{inspect(new_interf.wft_preview_path)}"
           )
 
           broadcast(new_state)
@@ -367,12 +443,12 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
-  defp run_cli_analysis(state, scaled_circle) do
+  defp run_cli_analysis(interf, scaled_circle) do
     CLI.analyze(
-      state.full_shot_path,
+      interf.full_shot_path,
       scaled_circle,
-      state.optical_params,
-      center_filter: state.center_filter_radius
+      interf.optical_params,
+      center_filter: interf.center_filter_radius
     )
   end
 
@@ -380,7 +456,7 @@ defmodule RougailSolstice.Interferometry.Server do
     case result[:wft] do
       nil ->
         Logger.warning("[InterfServer] No WFT data from analysis")
-        state
+        {state.interf_state, state}
 
       {:file, wft_path} ->
         render_wft_from_file(state, wft_path)
@@ -391,9 +467,11 @@ defmodule RougailSolstice.Interferometry.Server do
   end
 
   defp render_wft_from_file(state, wft_path) do
+    interf = state.interf_state
+
     if File.exists?(wft_path) do
       Logger.info("[InterfServer] render_wft_preview using file: #{wft_path}")
-      conic = state.optical_params[:conic] || -1.0
+      conic = interf.optical_params[:conic] || -1.0
 
       case WFT.parse_file(wft_path, apply_null: true, conic: conic) do
         {:ok, wft} ->
@@ -401,17 +479,18 @@ defmodule RougailSolstice.Interferometry.Server do
 
         {:error, reason} ->
           Logger.warning("[InterfServer] WFT parse failed: #{inspect(reason)}")
-          state
+          {interf, state}
       end
     else
       Logger.warning("[InterfServer] WFT file not found: #{wft_path}")
-      state
+      {interf, state}
     end
   end
 
   defp render_wft_from_binary(state, wft_binary) do
+    interf = state.interf_state
     Logger.info("[InterfServer] render_wft_preview using binary data")
-    conic = state.optical_params[:conic] || -1.0
+    conic = interf.optical_params[:conic] || -1.0
 
     case WFT.parse(wft_binary, apply_null: true, conic: conic) do
       {:ok, wft} ->
@@ -419,48 +498,28 @@ defmodule RougailSolstice.Interferometry.Server do
 
       {:error, reason} ->
         Logger.warning("[InterfServer] WFT parse failed: #{inspect(reason)}")
-        state
+        {interf, state}
     end
   end
 
   defp render_wft_to_store(state, wft) do
+    interf = state.interf_state
+    image_store = state.image_store
+
     case WFT.render_to_png(wft) do
       {:ok, png_binary, metadata} ->
         key = "wft_preview_#{System.unique_integer([:positive])}"
-        RougailSolstice.ImageStore.delete_prefix("wft_preview_")
-        RougailSolstice.ImageStore.put(key, png_binary, content_type: "image/png")
-        url = RougailSolstice.ImageStore.url(key)
+        ImageStore.delete_prefix(image_store, "wft_preview_")
+        ImageStore.put(image_store, key, png_binary, content_type: "image/png")
+        url = ImageStore.url(key)
 
         Logger.info("[InterfServer] WFT preview rendered: #{url}, stats: #{inspect(metadata)}")
-        State.set_wft_preview(state, url)
+        new_interf = State.set_wft_preview(interf, url)
+        {new_interf, %{state | interf_state: new_interf}}
 
       {:error, reason} ->
         Logger.warning("[InterfServer] WFT render failed: #{inspect(reason)}")
-        state
-    end
-  end
-
-  defp get_image_dimensions("/images/" <> key) do
-    case RougailSolstice.ImageStore.get(key) do
-      %{dimensions: {_, _} = dims} -> {:ok, dims}
-      %{dimensions: nil} -> {:error, :no_dimensions}
-      nil -> {:error, :not_found}
-    end
-  end
-
-  defp get_image_dimensions(path) do
-    case System.cmd("identify", ["-format", "%wx%h", path], stderr_to_stdout: true) do
-      {output, 0} ->
-        case String.split(String.trim(output), "x") do
-          [w, h] ->
-            {:ok, {String.to_integer(w), String.to_integer(h)}}
-
-          _ ->
-            {:error, :invalid_dimensions}
-        end
-
-      {_, _} ->
-        {:error, :identify_failed}
+        {interf, state}
     end
   end
 
@@ -469,6 +528,8 @@ defmodule RougailSolstice.Interferometry.Server do
   end
 
   defp broadcast(state) do
-    Phoenix.PubSub.broadcast(@pubsub, @topic, {:interferometry_state_changed, state})
+    topic = Topics.interferometry(state.session_id)
+    Logger.debug("[InterfServer] broadcasting to topic: #{topic}, session_id: #{inspect(state.session_id)}")
+    Phoenix.PubSub.broadcast(@pubsub, topic, {:interferometry_state_changed, state.interf_state})
   end
 end
