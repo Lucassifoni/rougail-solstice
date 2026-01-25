@@ -55,7 +55,8 @@ defmodule RougailSolstice.CommandsTest do
     test "captures when camera is locked", %{robot: robot} do
       {:ok, _} = Commands.lock_camera(robot)
       assert {:ok, _state, capture} = Commands.take_picture(robot)
-      assert capture.image_path != nil
+      assert is_binary(capture.image_binary)
+      assert byte_size(capture.image_binary) > 0
     end
 
     test "fails when camera not locked", %{robot: robot} do

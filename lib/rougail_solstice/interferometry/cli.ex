@@ -1,20 +1,13 @@
 defmodule RougailSolstice.Interferometry.CLI do
   @moduledoc """
-  Wrapper for the dftfringe-cli binary.
+  Interface for interferometry analysis using sidecar processes.
   Provides functions to generate DFT previews and run full interferogram analysis.
 
-  Supports three modes configured via application config:
-  - :native - calls dftfringe-cli directly (must be in PATH)
-  - :docker - calls via docker run with volume mounts
-  - :mock - returns dummy data for testing
+  All operations use in-memory binary data - no filesystem I/O.
 
-  Additionally, when `use_sidecar: true` is configured, uses persistent sidecar
-  processes instead of spawning a new CLI process per request. The sidecar mode
-  uses the underlying :native or :docker mode to determine how to spawn the process.
-
-  For DFT preview generation, alternative implementations are available:
-  - `dft_backend: :sidecar` (default) - uses the C++ sidecar/CLI
-  - `dft_backend: :nx` - uses pure Elixir/Nx/Evision implementation (synchronous)
+  For DFT preview generation, two backends are available:
+  - `dft_backend: :sidecar` (default) - uses the C++ sidecar process
+  - `dft_backend: :nx` - uses pure Elixir/Nx/Evision implementation
   """
 
   require Logger
@@ -30,28 +23,20 @@ defmodule RougailSolstice.Interferometry.CLI do
           conic: number(),
           obstruction: number() | nil
         }
-  @type dft_result :: {:file, Path.t()} | {:binary, binary()}
-  @type wft_result :: {:file, Path.t()} | {:binary, binary()} | nil
   @type analysis_result :: %{
           rms_waves: float(),
           pv_waves: float(),
           strehl: float(),
           zernikes_raw: %{integer() => float()},
           zernikes_nulled: %{integer() => float()},
-          wft: wft_result(),
-          csv_path: Path.t() | nil
+          wft: {:binary, binary()} | nil,
+          csv_path: nil
         }
 
   @doc """
-  Returns whether sidecar mode is enabled.
-  """
-  @spec use_sidecar?() :: boolean()
-  def use_sidecar?, do: Keyword.get(config(), :use_sidecar, false)
-
-  @doc """
   Returns the DFT backend to use for preview generation.
-  - `:sidecar` (default) - uses C++ sidecar/CLI
-  - `:nx` - uses Elixir/Nx/Evision implementation (synchronous)
+  - `:sidecar` (default) - uses C++ sidecar process
+  - `:nx` - uses Elixir/Nx/Evision implementation
   """
   @spec dft_backend() :: :sidecar | :nx
   def dft_backend, do: Keyword.get(config(), :dft_backend, :sidecar)
@@ -63,326 +48,29 @@ defmodule RougailSolstice.Interferometry.CLI do
   def dft_size, do: Keyword.get(config(), :dft_size, 512)
 
   @doc """
-  Generate a DFT preview image (synchronous).
-
-  In file-based modes (native/docker), takes file paths, returns `{:ok, {:file, path}}`.
-  In sidecar/nx mode, takes binary data, returns `{:ok, {:binary, png_data}}`.
+  Generate a DFT preview image from binary data.
+  Returns `{:ok, {:binary, png_data}}` on success.
   """
-  @spec dft_preview(Path.t() | binary(), circle(), Path.t() | nil | keyword()) ::
-          {:ok, dft_result()} | {:error, term()}
-  def dft_preview(input, circle, output_path_or_opts \\ nil)
-
-  def dft_preview(input, circle, opts) when is_list(opts) do
+  @spec dft_preview(binary(), circle(), keyword()) ::
+          {:ok, {:binary, binary()}} | {:error, term()}
+  def dft_preview(image_binary, circle, opts \\ []) do
     session_id = Keyword.get(opts, :session_id)
-    output_path = Keyword.get(opts, :output_path)
 
-    cond do
-      mode() == :mock -> mock_dft_preview(output_path)
-      dft_backend() == :nx -> run_dft_preview_nx(input, circle, output_path)
-      use_sidecar?() -> run_dft_preview_sidecar(input, circle, session_id)
-      true -> run_dft_preview(input, circle, output_path)
+    case {mode(), dft_backend()} do
+      {:mock, _} -> {:ok, {:binary, mock_png_data()}}
+      {_, :nx} -> run_dft_preview_nx(image_binary, circle)
+      {_, :sidecar} -> run_dft_preview_sidecar(image_binary, circle, session_id)
     end
   end
 
-  def dft_preview(input, circle, output_path) do
-    dft_preview(input, circle, output_path: output_path)
-  end
-
-  defp run_dft_preview_nx(input, circle, output_path) do
-    image_binary = ensure_binary(input)
-
+  defp run_dft_preview_nx(image_binary, circle) do
     case DFTNx.compute_magnitude_preview(image_binary, circle, dft_size: dft_size()) do
-      {:ok, png_binary} ->
-        if output_path do
-          File.write!(output_path, png_binary)
-          {:ok, {:file, output_path}}
-        else
-          {:ok, {:binary, png_binary}}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, png_binary} -> {:ok, {:binary, png_binary}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp mock_dft_preview(output_path) do
-    data = "mock dft preview"
-
-    if output_path do
-      File.write!(output_path, data)
-      {:ok, {:file, output_path}}
-    else
-      {:ok, {:binary, data}}
-    end
-  end
-
-  defp run_dft_preview(input_path, circle, output_path) do
-    case mode() do
-      :native ->
-        run_dft_preview_native(input_path, circle, output_path)
-
-      :docker ->
-        run_dft_preview_docker(input_path, circle, output_path)
-    end
-  end
-
-  defp run_dft_preview_native(input_path, circle, output_path) do
-    args = [
-      "--input",
-      input_path,
-      "--circle",
-      format_circle(circle),
-      "--dft-preview",
-      "--dft-output",
-      output_path
-    ]
-
-    case System.cmd("dftfringe-cli", args, stderr_to_stdout: true) do
-      {_output, 0} ->
-        if File.exists?(output_path),
-          do: {:ok, {:file, output_path}},
-          else: {:error, :output_not_created}
-
-      {output, code} ->
-        {:error, {:cli_error, code, output}}
-    end
-  end
-
-  defp run_dft_preview_docker(input_path, circle, output_path) do
-    with_staging_dir(fn staging_dir ->
-      input_basename = Path.basename(input_path)
-      output_basename = Path.basename(output_path)
-      staged_input = Path.join(staging_dir, input_basename)
-
-      File.cp!(input_path, staged_input)
-
-      container_input = Path.join(docker_mount_dir(), input_basename)
-      container_output = Path.join(docker_mount_dir(), output_basename)
-
-      args = [
-        "--input",
-        container_input,
-        "--circle",
-        format_circle(circle),
-        "--dft-preview",
-        "--dft-output",
-        container_output
-      ]
-
-      docker_args =
-        ["run", "--rm", "-v", "#{staging_dir}:#{docker_mount_dir()}", docker_image()] ++ args
-
-      Logger.debug("[CLI] Running: docker #{Enum.join(docker_args, " ")}")
-
-      case System.cmd("docker", docker_args, stderr_to_stdout: true) do
-        {_output, 0} ->
-          staged_output = Path.join(staging_dir, output_basename)
-
-          if File.exists?(staged_output) do
-            File.cp!(staged_output, output_path)
-            {:ok, {:file, output_path}}
-          else
-            {:error, :output_not_created}
-          end
-
-        {output, code} ->
-          Logger.error("[CLI] Docker command failed (#{code}): #{output}")
-          {:error, {:cli_error, code, output}}
-      end
-    end)
-  end
-
-  @spec analyze(Path.t(), circle(), optical_params(), keyword()) ::
-          {:ok, analysis_result()} | {:error, term()}
-  def analyze(input_path, circle, params, opts \\ []) do
-    center_filter = Keyword.get(opts, :center_filter, 10)
-    output_dir = Keyword.get(opts, :output_dir, System.tmp_dir!())
-    basename = Path.basename(input_path, Path.extname(input_path))
-    timestamp = System.unique_integer([:positive])
-
-    wft_path = Path.join(output_dir, "#{basename}_#{timestamp}.wft")
-    csv_path = Path.join(output_dir, "#{basename}_#{timestamp}_zernikes.csv")
-
-    cond do
-      mode() == :mock ->
-        {:ok, output} = {:ok, mock_output()}
-        {:ok, parsed} = parse_structured_output(output)
-        {:ok, Map.merge(parsed, %{wft: nil, csv_path: nil})}
-
-      use_sidecar?() ->
-        session_id = Keyword.get(opts, :session_id)
-        run_analyze_sidecar(session_id, input_path, circle, params, center_filter, wft_path, csv_path)
-
-      mode() == :native ->
-        run_analyze_native(input_path, circle, params, center_filter, wft_path, csv_path)
-
-      mode() == :docker ->
-        run_analyze_docker(input_path, circle, params, center_filter, wft_path, csv_path)
-    end
-  end
-
-  defp run_analyze_native(input_path, circle, params, center_filter, wft_path, csv_path) do
-    args = build_analyze_args(input_path, circle, params, center_filter, wft_path, csv_path)
-
-    case System.cmd("dftfringe-cli", args, stderr_to_stdout: true) do
-      {output, 0} ->
-        with {:ok, parsed} <- parse_structured_output(output) do
-          wft_result = if File.exists?(wft_path), do: {:file, wft_path}
-
-          result =
-            parsed
-            |> Map.put(:wft, wft_result)
-            |> Map.put(:csv_path, if(File.exists?(csv_path), do: csv_path))
-
-          {:ok, result}
-        end
-
-      {output, code} ->
-        {:error, {:cli_error, code, output}}
-    end
-  end
-
-  defp run_analyze_docker(input_path, circle, params, center_filter, wft_path, csv_path) do
-    Logger.info("""
-    [CLI] analyze called with:
-      input_path: #{input_path}
-      circle: cx=#{circle.cx}, cy=#{circle.cy}, r=#{circle.r}
-      optical_params: diameter=#{params.diameter}, roc=#{params.roc}, lambda=#{params.lambda}, conic=#{params.conic}, obstruction=#{params[:obstruction]}
-      center_filter: #{center_filter}
-    """)
-
-    with_staging_dir(fn staging_dir ->
-      input_basename = Path.basename(input_path)
-      wft_basename = Path.basename(wft_path)
-      csv_basename = Path.basename(csv_path)
-
-      staged_input = Path.join(staging_dir, input_basename)
-      File.cp!(input_path, staged_input)
-
-      container_input = Path.join(docker_mount_dir(), input_basename)
-      container_wft = Path.join(docker_mount_dir(), wft_basename)
-      container_csv = Path.join(docker_mount_dir(), csv_basename)
-
-      args =
-        build_analyze_args(
-          container_input,
-          circle,
-          params,
-          center_filter,
-          container_wft,
-          container_csv
-        )
-
-      docker_args =
-        ["run", "--rm", "-v", "#{staging_dir}:#{docker_mount_dir()}", docker_image()] ++ args
-
-      Logger.info("[CLI] Running: docker #{Enum.join(docker_args, " ")}")
-
-      case System.cmd("docker", docker_args, stderr_to_stdout: true) do
-        {output, 0} ->
-          Logger.info("[CLI] Raw output:\n#{output}")
-
-          staged_wft = Path.join(staging_dir, wft_basename)
-          staged_csv = Path.join(staging_dir, csv_basename)
-
-          if File.exists?(staged_wft), do: File.cp!(staged_wft, wft_path)
-          if File.exists?(staged_csv), do: File.cp!(staged_csv, csv_path)
-
-          with {:ok, parsed} <- parse_structured_output(output) do
-            wft_result = if File.exists?(wft_path), do: {:file, wft_path}
-
-            result =
-              parsed
-              |> Map.put(:wft, wft_result)
-              |> Map.put(:csv_path, if(File.exists?(csv_path), do: csv_path))
-
-            Logger.info(
-              "[CLI] Parsed result: rms=#{result.rms_waves}, pv=#{result.pv_waves}, strehl=#{result.strehl}"
-            )
-
-            {:ok, result}
-          end
-
-        {output, code} ->
-          Logger.error("[CLI] Docker analyze failed (#{code}): #{output}")
-          {:error, {:cli_error, code, output}}
-      end
-    end)
-  end
-
-  @spec parse_structured_output(String.t()) :: {:ok, map()} | {:error, term()}
-  def parse_structured_output(output) do
-    result =
-      output
-      |> String.split("\n", trim: true)
-      |> Enum.reduce(
-        %{zernikes_raw: %{}, zernikes_nulled: %{}, rms_waves: 0.0, pv_waves: 0.0, strehl: 0.0},
-        fn line, acc ->
-          case String.split(line, "\t", parts: 2) do
-            ["rms_waves", val] ->
-              Map.put(acc, :rms_waves, parse_float(val))
-
-            ["pv_waves", val] ->
-              Map.put(acc, :pv_waves, parse_float(val))
-
-            ["strehl", val] ->
-              Map.put(acc, :strehl, parse_float(val))
-
-            ["zernike_raw_" <> n, val] ->
-              put_in(acc, [:zernikes_raw, parse_int(n)], parse_float(val))
-
-            ["zernike_nulled_" <> n, val] ->
-              put_in(acc, [:zernikes_nulled, parse_int(n)], parse_float(val))
-
-            _ ->
-              acc
-          end
-        end
-      )
-
-    {:ok, result}
-  rescue
-    e -> {:error, {:parse_error, e}}
-  end
-
-  defp build_analyze_args(input, circle, params, center_filter, wft_path, csv_path) do
-    png_path = String.replace_suffix(wft_path, ".wft", "_wavefront.png")
-
-    base = [
-      "--input",
-      input,
-      "--circle",
-      format_circle(circle),
-      "--diameter",
-      to_string(params.diameter),
-      "--roc",
-      to_string(params.roc),
-      "--lambda",
-      to_string(params.lambda),
-      "--conic",
-      to_string(params.conic),
-      "--center-filter",
-      to_string(center_filter),
-      "--zernike-terms",
-      "48",
-      "--structured-output",
-      "--output",
-      wft_path,
-      "--zernikes",
-      csv_path,
-      "--wavefront-png",
-      png_path
-    ]
-
-    if params[:obstruction] && params.obstruction > 0 do
-      base ++ ["--obstruction", to_string(params.obstruction)]
-    else
-      base
-    end
-  end
-
-  defp run_dft_preview_sidecar(input, circle, session_id) do
-    image_binary = ensure_binary(input)
+  defp run_dft_preview_sidecar(image_binary, circle, session_id) do
     worker = Supervisor.preview_worker(session_id)
 
     with {:ok, response} <- Worker.send_preview(worker, image_binary, circle),
@@ -393,15 +81,23 @@ defmodule RougailSolstice.Interferometry.CLI do
     end
   end
 
-  defp ensure_binary(data) when is_binary(data) do
-    if File.exists?(data) do
-      File.read!(data)
-    else
-      data
+  @doc """
+  Run full interferogram analysis on binary image data.
+  Returns analysis results with WFT data as binary.
+  """
+  @spec analyze(binary(), circle(), optical_params(), keyword()) ::
+          {:ok, analysis_result()} | {:error, term()}
+  def analyze(image_binary, circle, params, opts \\ []) do
+    case mode() do
+      :mock -> {:ok, mock_analysis_result()}
+      _ -> run_analyze_sidecar(image_binary, circle, params, opts)
     end
   end
 
-  defp run_analyze_sidecar(session_id, input, circle, params, center_filter, _wft_path, _csv_path) do
+  defp run_analyze_sidecar(image_binary, circle, params, opts) do
+    session_id = Keyword.get(opts, :session_id)
+    center_filter = Keyword.get(opts, :center_filter, 10)
+
     config = %{
       diameter: params.diameter,
       roc: params.roc,
@@ -415,7 +111,6 @@ defmodule RougailSolstice.Interferometry.CLI do
     }
 
     worker = Supervisor.analyze_worker(session_id)
-    image_binary = ensure_binary(input)
 
     with {:ok, _} <- Worker.send_config(worker, config),
          {:ok, response} <- Worker.send_analyze(worker, image_binary, circle) do
@@ -467,46 +162,25 @@ defmodule RougailSolstice.Interferometry.CLI do
     end
   end
 
-  defp format_circle(%{cx: cx, cy: cy, r: r}) do
-    "#{round(cx)},#{round(cy)},#{round(r)}"
-  end
-
   defp config do
     Application.get_env(:rougail_solstice, __MODULE__, [])
   end
 
-  defp mode, do: Keyword.get(config(), :mode, :native)
-  defp docker_image, do: Keyword.get(config(), :docker_image, "dftfringe-cli:latest")
-  defp docker_mount_dir, do: Keyword.get(config(), :docker_mount_dir, "/data")
+  defp mode, do: Keyword.get(config(), :mode, :sidecar)
 
-  defp with_staging_dir(fun) do
-    staging_dir = Path.join(System.tmp_dir!(), "dftfringe_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(staging_dir)
-
-    try do
-      fun.(staging_dir)
-    after
-      File.rm_rf(staging_dir)
-    end
+  defp mock_png_data do
+    <<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A, "mock"::binary>>
   end
 
-  defp mock_output do
-    """
-    rms_waves\t0.05
-    pv_waves\t0.25
-    strehl\t0.95
-    zernike_raw_1\t0.001
-    zernike_raw_2\t0.002
-    zernike_nulled_1\t0.0005
-    zernike_nulled_2\t0.001
-    """
-  end
-
-  defp parse_float(str) do
-    str |> String.trim() |> Float.parse() |> elem(0)
-  end
-
-  defp parse_int(str) do
-    str |> String.trim() |> Integer.parse() |> elem(0)
+  defp mock_analysis_result do
+    %{
+      rms_waves: 0.05,
+      pv_waves: 0.25,
+      strehl: 0.95,
+      zernikes_raw: %{1 => 0.001, 2 => 0.002},
+      zernikes_nulled: %{1 => 0.0005, 2 => 0.001},
+      wft: nil,
+      csv_path: nil
+    }
   end
 end

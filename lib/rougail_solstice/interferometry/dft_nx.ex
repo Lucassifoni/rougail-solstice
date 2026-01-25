@@ -37,9 +37,8 @@ defmodule RougailSolstice.Interferometry.DFT.Nx do
     with {:ok, gray} <- decode_to_grayscale(image_binary),
          {:ok, prepared, scaled_circle} <- prepare_image(gray, circle, dft_size),
          {:ok, mask} <- make_mask(prepared, scaled_circle),
-         {:ok, magnitude} <- compute_dft_magnitude(prepared, mask),
-         {:ok, png_binary} <- encode_to_png(magnitude) do
-      {:ok, png_binary}
+         {:ok, magnitude} <- compute_dft_magnitude(prepared, mask) do
+      encode_to_png(magnitude)
     end
   rescue
     e -> {:error, {:dft_error, e, __STACKTRACE__}}

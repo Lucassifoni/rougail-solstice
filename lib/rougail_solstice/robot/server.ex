@@ -74,7 +74,8 @@ defmodule RougailSolstice.Robot.Server do
 
     case result do
       {:ok, robot_state} ->
-        {:ok, %__MODULE__{robot_state: robot_state, session_id: session_id, image_store: image_store}}
+        {:ok,
+         %__MODULE__{robot_state: robot_state, session_id: session_id, image_store: image_store}}
 
       {:error, reason} ->
         {:stop, reason}

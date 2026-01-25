@@ -417,11 +417,17 @@ defmodule RougailSolsticeWeb.RobotLive do
           <div>
             <h1 class="text-2xl font-bold">{@session_info.optical_piece.name}</h1>
             <p class="text-sm text-gray-500">
-              Session {@session_id} | Started: {Calendar.strftime(@session_info.started_at, "%H:%M:%S")}
+              Session {@session_id} | Started: {Calendar.strftime(
+                @session_info.started_at,
+                "%H:%M:%S"
+              )}
             </p>
           </div>
           <div class="flex gap-2">
-            <.link navigate={~p"/"} class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded font-medium transition-colors">
+            <.link
+              navigate={~p"/"}
+              class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded font-medium transition-colors"
+            >
               Back to Sessions
             </.link>
             <button
@@ -688,7 +694,9 @@ defmodule RougailSolsticeWeb.RobotLive do
         </div>
         <div>
           <span class="text-gray-500">Image:</span>
-          <span class="ml-2 font-mono">{@state.camera.last_capture.image_path}</span>
+          <span class="ml-2 font-mono">
+            {format_capture_size(@state.camera.last_capture)}
+          </span>
         </div>
         <div class="col-span-2">
           <span class="text-gray-500">Position:</span>
@@ -701,6 +709,11 @@ defmodule RougailSolsticeWeb.RobotLive do
       </div>
     </div>
     """
+  end
+
+  defp format_capture_size(capture) do
+    size_kb = div(byte_size(capture.image_binary), 1024)
+    "In-memory (#{capture.content_type}, #{size_kb} KB)"
   end
 
   defp optical_config_controls(assigns) do

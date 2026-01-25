@@ -15,42 +15,25 @@ defmodule RougailSolstice.Robot.CameraAdapter.Virtual do
                  "priv/static/samples"
                )
 
-  @capture_dir Application.compile_env(:rougail_solstice, :capture_dir, "/tmp/rougail_captures")
-
   @impl true
   def capture do
     Logger.info("[VirtualCamera] capture() called")
-    ensure_capture_dir()
-    timestamp = System.unique_integer([:positive])
-    output_path = Path.join(@capture_dir, "virtual_capture_#{timestamp}.jpg")
 
     result =
       case find_sample_image("capture") do
         {:ok, sample} ->
           Logger.debug("[VirtualCamera] Using sample image: #{sample}")
-          File.cp!(sample, output_path)
-          {:ok, output_path}
+          binary = File.read!(sample)
+          content_type = content_type_for(sample)
+          {:ok, {:binary, binary, content_type}}
 
         :none ->
           Logger.debug("[VirtualCamera] Generating synthetic capture image")
-          generate_test_image_to_file(output_path, 3456, 2304)
+          generate_test_image_binary(3456, 2304)
       end
 
-    Logger.info("[VirtualCamera] capture() -> #{inspect(result)}")
+    Logger.info("[VirtualCamera] capture() -> ok")
     result
-  end
-
-  defp ensure_capture_dir do
-    File.mkdir_p!(@capture_dir)
-  end
-
-  defp generate_test_image_to_file(output_path, width, height) do
-    args = ["-size", "#{width}x#{height}", "plasma:gray50-gray80", output_path]
-
-    case System.cmd("convert", args, stderr_to_stdout: true) do
-      {_, 0} -> {:ok, output_path}
-      {output, code} -> {:error, {:convert_failed, code, output}}
-    end
   end
 
   @impl true

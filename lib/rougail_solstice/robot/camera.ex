@@ -35,8 +35,8 @@ defmodule RougailSolstice.Robot.Camera do
           {:ok, t(), Capture.t()} | {:error, term()}
   def take_picture(%__MODULE__{status: :locked} = camera, position, adapter) do
     case adapter.capture() do
-      {:ok, image_path} ->
-        capture = Capture.new(position, image_path)
+      {:ok, {:binary, image_binary, content_type}} ->
+        capture = Capture.new(position, image_binary, content_type)
         {:ok, %{camera | last_capture: capture}, capture}
 
       {:error, _} = error ->

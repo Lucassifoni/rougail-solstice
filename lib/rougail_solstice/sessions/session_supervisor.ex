@@ -14,11 +14,9 @@ defmodule RougailSolstice.Sessions.SessionSupervisor do
 
   def start_link(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
-    Keyword.fetch!(opts, :optical_piece)
+    _optical_piece = Keyword.fetch!(opts, :optical_piece)
 
-    Supervisor.start_link(__MODULE__, opts,
-      name: via(session_id, :supervisor)
-    )
+    Supervisor.start_link(__MODULE__, opts, name: via(session_id, :supervisor))
   end
 
   def via(session_id, role) do
@@ -31,25 +29,26 @@ defmodule RougailSolstice.Sessions.SessionSupervisor do
     optical_piece = Keyword.fetch!(opts, :optical_piece)
     adapter = Keyword.get(opts, :adapter) || CameraAdapter.from_optical_piece(optical_piece)
 
-    children = [
-      {RougailSolstice.ImageStore, name: via(session_id, :image_store)},
-      {RougailSolstice.Robot.Server,
-       name: via(session_id, :robot),
-       session_id: session_id,
-       adapter: adapter,
-       image_store: via(session_id, :image_store)},
-      {RougailSolstice.Outline.Server,
-       name: via(session_id, :outline),
-       session_id: session_id,
-       interf_server: via(session_id, :interferometry),
-       image_store: via(session_id, :image_store)},
-      {RougailSolstice.Interferometry.Server,
-       name: via(session_id, :interferometry),
-       session_id: session_id,
-       robot_server: via(session_id, :robot),
-       image_store: via(session_id, :image_store),
-       optical_piece: optical_piece}
-    ] ++ sidecar_children(session_id)
+    children =
+      [
+        {RougailSolstice.ImageStore, name: via(session_id, :image_store)},
+        {RougailSolstice.Robot.Server,
+         name: via(session_id, :robot),
+         session_id: session_id,
+         adapter: adapter,
+         image_store: via(session_id, :image_store)},
+        {RougailSolstice.Outline.Server,
+         name: via(session_id, :outline),
+         session_id: session_id,
+         interf_server: via(session_id, :interferometry),
+         image_store: via(session_id, :image_store)},
+        {RougailSolstice.Interferometry.Server,
+         name: via(session_id, :interferometry),
+         session_id: session_id,
+         robot_server: via(session_id, :robot),
+         image_store: via(session_id, :image_store),
+         optical_piece: optical_piece}
+      ] ++ sidecar_children(session_id)
 
     Supervisor.init(children, strategy: :one_for_one)
   end

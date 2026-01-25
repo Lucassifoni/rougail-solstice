@@ -92,7 +92,8 @@ defmodule RougailSolsticeWeb.RobotLiveTest do
 
       html = render(view)
       assert html =~ "Last Capture"
-      assert html =~ "virtual_capture_"
+      assert html =~ "In-memory"
+      assert html =~ "image/jpeg"
     end
 
     test "release returns to idle", %{conn: conn, session_id: session_id} do

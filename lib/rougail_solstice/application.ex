@@ -15,7 +15,8 @@ defmodule RougailSolstice.Application do
          query: Application.get_env(:rougail_solstice, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: RougailSolstice.PubSub},
         {Registry, keys: :unique, name: RougailSolstice.Sessions.Registry},
-        {DynamicSupervisor, name: RougailSolstice.Sessions.DynamicSupervisor, strategy: :one_for_one},
+        {DynamicSupervisor,
+         name: RougailSolstice.Sessions.DynamicSupervisor, strategy: :one_for_one},
         RougailSolstice.Sessions.SessionManager,
         RougailSolsticeWeb.Endpoint
       ]

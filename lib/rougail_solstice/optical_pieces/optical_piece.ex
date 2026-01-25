@@ -38,7 +38,15 @@ defmodule RougailSolstice.OpticalPieces.OpticalPiece do
   end
 
   @required_fields [:name, :diameter, :roc]
-  @optional_fields [:lambda, :conic, :obstruction, :is_default, :camera_port, :camera_model, :notes]
+  @optional_fields [
+    :lambda,
+    :conic,
+    :obstruction,
+    :is_default,
+    :camera_port,
+    :camera_model,
+    :notes
+  ]
 
   @spec changeset(t() | Ecto.Changeset.t(), map()) :: Ecto.Changeset.t()
   def changeset(optical_piece, attrs) do

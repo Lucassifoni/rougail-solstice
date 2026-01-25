@@ -174,7 +174,11 @@ defmodule RougailSolstice.Outline.Server do
     preview_path = interf_state.preview_frame_path
 
     if preview_path && preview_path != server_state.last_preview_path do
-      case fetch_frame_binary(preview_path, interf_state.preview_dimensions, server_state.image_store) do
+      case fetch_frame_binary(
+             preview_path,
+             interf_state.preview_dimensions,
+             server_state.image_store
+           ) do
         {:ok, binary, dims} ->
           frame = %{
             binary: binary,

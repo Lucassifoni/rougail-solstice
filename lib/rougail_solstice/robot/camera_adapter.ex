@@ -2,27 +2,26 @@ defmodule RougailSolstice.Robot.CameraAdapter do
   @moduledoc """
   Behaviour for camera adapters.
   Adapters can be either modules (stateless) or structs (with configuration like port).
+  All capture operations return binary data directly - no filesystem I/O.
   """
 
   alias __MODULE__.{Virtual, Canon}
 
   @type capture_result ::
-          {:ok, Path.t()}
-          | {:ok, {:binary, binary(), content_type :: String.t()}}
-          | {:error, term()}
+          {:ok, {:binary, binary(), content_type :: String.t()}} | {:error, term()}
   @type adapter :: module() | struct()
 
   @adapters [Virtual, Canon]
 
   @doc """
   Captures a full-resolution still image.
-  Returns the path to the captured image file.
+  Returns `{:ok, {:binary, image_data, content_type}}` on success.
   """
   @callback capture() :: capture_result()
 
   @doc """
   Captures a low-resolution preview frame (live view).
-  Returns the path to the preview image file.
+  Returns `{:ok, {:binary, image_data, content_type}}` on success.
   Used for real-time viewfinder display.
   """
   @callback capture_preview() :: capture_result()

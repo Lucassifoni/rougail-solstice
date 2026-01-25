@@ -49,6 +49,7 @@ defmodule RougailSolstice.Outline.Detection do
   def run_detection(binaries, {_expected_width, _expected_height}, opts \\ []) do
     min_confidence = Keyword.get(opts, :min_confidence, 0.5)
     params = Map.merge(@default_params, Keyword.get(opts, :detection_params, %{}))
+
     session_ctx = %{
       session_id: Keyword.get(opts, :session_id),
       image_store: Keyword.get(opts, :image_store, RougailSolstice.ImageStore)
@@ -66,7 +67,9 @@ defmodule RougailSolstice.Outline.Detection do
          {:ok, variance_map} <- compute_variance_map(normalized_mats) do
       if debug_save, do: save_variance_image(variance_map, "02_variance")
       variance_u8 = variance_to_u8(variance_map)
-      results = run_all_strategies(variance_map, variance_u8, {width, height}, params, session_ctx)
+
+      results =
+        run_all_strategies(variance_map, variance_u8, {width, height}, params, session_ctx)
 
       case select_best_result(results, min_confidence) do
         {:ok, result} ->

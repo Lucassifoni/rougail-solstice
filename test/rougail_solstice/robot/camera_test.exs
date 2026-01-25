@@ -38,8 +38,9 @@ defmodule RougailSolstice.Robot.CameraTest do
 
       assert %Capture{} = capture
       assert capture.position == position
-      assert capture.image_path =~ ~r/virtual_capture_\d+\.jpg$/
-      assert File.exists?(capture.image_path)
+      assert is_binary(capture.image_binary)
+      assert byte_size(capture.image_binary) > 0
+      assert capture.content_type in ["image/jpeg", "image/png"]
       assert updated.last_capture == capture
       assert updated.status == :locked
     end

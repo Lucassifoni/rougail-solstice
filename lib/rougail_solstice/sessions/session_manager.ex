@@ -84,7 +84,11 @@ defmodule RougailSolstice.Sessions.SessionManager do
               }
 
               new_sessions = Map.put(state.sessions, optical_piece_id, session_info)
-              Logger.info("[SessionManager] Session #{optical_piece_id} opened for #{optical_piece.name}")
+
+              Logger.info(
+                "[SessionManager] Session #{optical_piece_id} opened for #{optical_piece.name}"
+              )
+
               Topics.broadcast(Topics.session_events(), {:session_opened, optical_piece_id})
               {:reply, {:ok, optical_piece_id}, %{state | sessions: new_sessions}}
 

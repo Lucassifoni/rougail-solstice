@@ -2,6 +2,7 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
   @moduledoc """
   Canon camera adapter using gphoto2.
   Requires gphoto2 to be installed on the system.
+  Returns binary data directly to avoid filesystem I/O.
 
   Can be used as a module (selects first available camera) or as a struct
   with a specific port for multi-camera setups.
@@ -17,8 +18,6 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
         }
 
   @gphoto2 "gphoto2"
-  @capture_dir Application.compile_env(:rougail_solstice, :capture_dir, "/tmp/captures")
-  @preview_path "/tmp/preview.jpg"
 
   @impl true
   def capture, do: do_capture(nil)
@@ -26,22 +25,22 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
   def capture(%__MODULE__{port: port}), do: do_capture(port)
 
   defp do_capture(port) do
-    ensure_capture_dir()
-    timestamp = DateTime.utc_now() |> DateTime.to_unix()
-    filename = Path.join(@capture_dir, "capture_#{timestamp}.jpg")
-
     base_args = [
       "--capture-image-and-download",
-      "--filename",
-      filename,
-      "--force-overwrite"
+      "--stdout"
     ]
 
     args = add_port_args(base_args, port)
 
-    case System.cmd(@gphoto2, args, stderr_to_stdout: true) do
-      {_, 0} -> {:ok, filename}
-      {output, code} -> {:error, {:gphoto2_error, code, output}}
+    case System.cmd(@gphoto2, args, stderr_to_stdout: false) do
+      {binary, 0} when byte_size(binary) > 0 ->
+        {:ok, {:binary, binary, "image/jpeg"}}
+
+      {_, 0} ->
+        {:error, :empty_capture}
+
+      {output, code} ->
+        {:error, {:gphoto2_error, code, output}}
     end
   end
 
@@ -53,16 +52,20 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
   defp do_capture_preview(port) do
     base_args = [
       "--capture-preview",
-      "--filename",
-      @preview_path,
-      "--force-overwrite"
+      "--stdout"
     ]
 
     args = add_port_args(base_args, port)
 
-    case System.cmd(@gphoto2, args, stderr_to_stdout: true) do
-      {_, 0} -> {:ok, @preview_path}
-      {output, code} -> {:error, {:gphoto2_error, code, output}}
+    case System.cmd(@gphoto2, args, stderr_to_stdout: false) do
+      {binary, 0} when byte_size(binary) > 0 ->
+        {:ok, {:binary, binary, "image/jpeg"}}
+
+      {_, 0} ->
+        {:error, :empty_preview}
+
+      {output, code} ->
+        {:error, {:gphoto2_error, code, output}}
     end
   end
 
@@ -126,10 +129,6 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
 
   defp add_port_args(args, nil), do: args
   defp add_port_args(args, port), do: ["--port", port | args]
-
-  defp ensure_capture_dir do
-    File.mkdir_p!(@capture_dir)
-  end
 
   defp parse_cameras(output) do
     output
