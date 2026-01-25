@@ -276,7 +276,8 @@ defmodule RougailSolstice.Interferometry.CLI do
         {:ok, Map.merge(parsed, %{wft: nil, csv_path: nil})}
 
       use_sidecar?() ->
-        run_analyze_sidecar(input_path, circle, params, center_filter, wft_path, csv_path)
+        session_id = Keyword.get(opts, :session_id)
+        run_analyze_sidecar(session_id, input_path, circle, params, center_filter, wft_path, csv_path)
 
       mode() == :native ->
         run_analyze_native(input_path, circle, params, center_filter, wft_path, csv_path)
@@ -466,7 +467,7 @@ defmodule RougailSolstice.Interferometry.CLI do
     end
   end
 
-  defp run_analyze_sidecar(input, circle, params, center_filter, _wft_path, _csv_path) do
+  defp run_analyze_sidecar(session_id, input, circle, params, center_filter, _wft_path, _csv_path) do
     config = %{
       diameter: params.diameter,
       roc: params.roc,
@@ -479,7 +480,7 @@ defmodule RougailSolstice.Interferometry.CLI do
       zernike_terms: 48
     }
 
-    worker = Supervisor.analyze_worker()
+    worker = Supervisor.analyze_worker(session_id)
     image_binary = ensure_binary(input)
 
     with {:ok, _} <- Worker.send_config(worker, config),

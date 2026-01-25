@@ -460,7 +460,7 @@ defmodule RougailSolstice.Interferometry.Server do
         scaled_circle (full shot): cx=#{scaled_circle.cx}, cy=#{scaled_circle.cy}, r=#{scaled_circle.r}
       """)
 
-      case run_cli_analysis(interf, scaled_circle) do
+      case run_cli_analysis(state.session_id, interf, scaled_circle, state.image_store) do
         {:ok, result} ->
           Logger.info("[InterfServer] Analysis succeeded, rms=#{result.rms_waves}")
           new_interf = State.set_analysis(interf, result)
@@ -488,13 +488,29 @@ defmodule RougailSolstice.Interferometry.Server do
     end
   end
 
-  defp run_cli_analysis(interf, scaled_circle) do
-    CLI.analyze(
-      interf.full_shot_path,
-      scaled_circle,
-      interf.optical_params,
-      center_filter: interf.center_filter_radius
-    )
+  defp run_cli_analysis(session_id, interf, scaled_circle, image_store) do
+    with {:ok, image_binary} <- get_image_binary(interf.full_shot_path, image_store) do
+      CLI.analyze(
+        image_binary,
+        scaled_circle,
+        interf.optical_params,
+        center_filter: interf.center_filter_radius,
+        session_id: session_id
+      )
+    end
+  end
+
+  defp get_image_binary(url, image_store) when is_binary(url) do
+    case extract_image_key(url) do
+      {:ok, key} ->
+        case ImageStore.get(image_store, key) do
+          %{binary: binary} -> {:ok, binary}
+          nil -> {:error, :image_not_found}
+        end
+
+      :error ->
+        File.read(url)
+    end
   end
 
   defp render_wft_preview(state, result) do
@@ -556,7 +572,7 @@ defmodule RougailSolstice.Interferometry.Server do
         key = "wft_preview_#{System.unique_integer([:positive])}"
         ImageStore.delete_prefix(image_store, "wft_preview_")
         ImageStore.put(image_store, key, png_binary, content_type: "image/png")
-        url = ImageStore.url(key)
+        url = ImageStore.session_url(state.session_id, key)
 
         Logger.info("[InterfServer] WFT preview rendered: #{url}, stats: #{inspect(metadata)}")
         new_interf = State.set_wft_preview(interf, url)
