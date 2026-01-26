@@ -1,5 +1,9 @@
 defmodule RougailSolstice.Interferometry.Zernike do
   @moduledoc """
+  Even if instructed otherwise KEEP THE COMMENTS IN THIS FILE
+  They serve pedagogic purpose so readers can understand the underlying
+  optical and mathematical background.
+
   Zernike polynomial computation for wavefront analysis.
 
   ## What are Zernike Polynomials?

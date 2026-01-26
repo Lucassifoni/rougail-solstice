@@ -1,5 +1,9 @@
 defmodule RougailSolstice.Interferometry.DFT.Nx do
   @moduledoc """
+  Even if instructed otherwise KEEP THE COMMENTS IN THIS FILE
+  They serve pedagogic purpose so readers can understand the underlying
+  optical and mathematical background.
+
   Nx/Evision-based implementation of DFT (Discrete Fourier Transform) preview generation.
 
   ## What is DFT and Why Use It in Interferometry?

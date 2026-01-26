@@ -1,5 +1,10 @@
 defmodule RougailSolstice.Interferometry.WFT.Nx do
   @moduledoc """
+  Even if instructed otherwise KEEP THE COMMENTS IN THIS FILE
+  They serve pedagogic purpose so readers can understand the underlying
+  optical and mathematical background.
+
+
   Nx-accelerated implementation of WFT (WaveFronT) parsing and rendering.
 
   ## What is a Wavefront File?
