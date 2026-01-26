@@ -15,6 +15,8 @@ defmodule RougailSolstice.Interferometry.Server do
   alias RougailSolstice.Interferometry.WFT.Nx, as: WFT
   alias RougailSolstice.OpticalPieces
   alias RougailSolstice.Outline.Server, as: OutlineServer
+  alias RougailSolstice.Robot.CameraAdapter.Canon
+  alias RougailSolstice.Robot.CameraAdapter.Liveview.Stream, as: LiveviewStream
   alias RougailSolstice.Robot.Server, as: RobotServer
   alias RougailSolstice.Sessions.Topics
 
@@ -27,7 +29,8 @@ defmodule RougailSolstice.Interferometry.Server do
     :robot_server,
     :image_store,
     :optical_piece,
-    :outline_server
+    :outline_server,
+    :liveview_stream
   ]
 
   def start_link(opts \\ []) do
@@ -167,22 +170,33 @@ defmodule RougailSolstice.Interferometry.Server do
   end
 
   def handle_call(:start_liveview, _from, state) do
-    Logger.info(
-      "[InterfServer] start_liveview called, scheduling preview capture every #{@preview_interval}ms"
-    )
-
+    robot_state = RobotServer.get_state(state.robot_server)
     new_interf = State.start_liveview(state.interf_state)
-    new_state = %{state | interf_state: new_interf}
-    schedule_preview_capture()
+
+    new_state =
+      case determine_liveview_mode(robot_state.camera_adapter) do
+        :streaming ->
+          start_streaming_liveview(
+            %{state | interf_state: new_interf},
+            robot_state.camera_adapter
+          )
+
+        :polling ->
+          Logger.info("[InterfServer] start_liveview (polling mode) every #{@preview_interval}ms")
+          schedule_preview_capture()
+          %{state | interf_state: new_interf}
+      end
+
     broadcast(new_state)
-    {:reply, {:ok, new_interf}, new_state}
+    {:reply, {:ok, new_state.interf_state}, new_state}
   end
 
   def handle_call(:stop_liveview, _from, state) do
-    new_interf = State.stop_liveview(state.interf_state)
-    new_state = %{state | interf_state: new_interf}
-    broadcast(new_state)
-    {:reply, {:ok, new_interf}, new_state}
+    new_state = stop_liveview_stream(state)
+    new_interf = State.stop_liveview(new_state.interf_state)
+    final_state = %{new_state | interf_state: new_interf}
+    broadcast(final_state)
+    {:reply, {:ok, new_interf}, final_state}
   end
 
   def handle_call(:capture_full_shot, _from, state) do
@@ -217,12 +231,18 @@ defmodule RougailSolstice.Interferometry.Server do
   @impl true
   def handle_info(:capture_preview, state) do
     if state.interf_state.liveview_active do
-      Logger.debug("[InterfServer] capture_preview tick - liveview active")
-      new_state = capture_and_process_preview(state)
+      new_state =
+        case state.liveview_stream do
+          nil ->
+            capture_and_process_preview(state)
+
+          stream_pid ->
+            capture_from_stream(state, stream_pid)
+        end
+
       schedule_preview_capture()
       {:noreply, new_state}
     else
-      Logger.debug("[InterfServer] capture_preview tick - liveview not active, skipping")
       {:noreply, state}
     end
   end
@@ -258,16 +278,15 @@ defmodule RougailSolstice.Interferometry.Server do
 
   defp store_preview_in_session(binary, content_type, state) do
     with {:ok, dims} <- get_binary_dimensions(binary) do
-      preview_key = "preview_#{System.unique_integer([:positive])}"
-
-      ImageStore.delete_prefix(state.image_store, "preview_")
+      preview_key = "preview"
 
       ImageStore.put(state.image_store, preview_key, binary,
         content_type: content_type,
         dimensions: dims
       )
 
-      url = ImageStore.session_url(state.session_id, preview_key)
+      version = System.unique_integer([:positive])
+      url = "#{ImageStore.session_url(state.session_id, preview_key)}?v=#{version}"
       {:ok, url, dims}
     end
   end
@@ -330,10 +349,10 @@ defmodule RougailSolstice.Interferometry.Server do
     with {:ok, image_binary} <- ImageStore.fetch_binary(image_store, interf.preview_frame_path),
          {:ok, {:binary, png_binary}} <-
            CLI.dft_preview(image_binary, interf.outline_circle, session_id: state.session_id) do
-      key = "dft_preview_#{System.unique_integer([:positive])}"
-      ImageStore.delete_prefix(image_store, "dft_preview_")
+      key = "dft_preview"
       ImageStore.put(image_store, key, png_binary, content_type: "image/png")
-      {:ok, ImageStore.session_url(state.session_id, key)}
+      version = System.unique_integer([:positive])
+      {:ok, "#{ImageStore.session_url(state.session_id, key)}?v=#{version}"}
     end
   end
 
@@ -451,6 +470,67 @@ defmodule RougailSolstice.Interferometry.Server do
   defp schedule_preview_capture do
     Process.send_after(self(), :capture_preview, @preview_interval)
   end
+
+  defp determine_liveview_mode(%Canon{}), do: :streaming
+  defp determine_liveview_mode(Canon), do: :streaming
+  defp determine_liveview_mode(_adapter), do: :polling
+
+  defp start_streaming_liveview(state, adapter) do
+    Logger.info("[InterfServer] start_liveview (streaming mode)")
+
+    camera_port =
+      case adapter do
+        %Canon{port: port} -> port
+        _ -> nil
+      end
+
+    case LiveviewStream.start_link(camera_port: camera_port) do
+      {:ok, stream_pid} ->
+        schedule_preview_capture()
+        %{state | liveview_stream: stream_pid}
+
+      {:error, reason} ->
+        Logger.error("[InterfServer] Failed to start liveview stream: #{inspect(reason)}")
+        Logger.info("[InterfServer] Falling back to polling mode")
+        schedule_preview_capture()
+        state
+    end
+  end
+
+  defp capture_from_stream(state, stream_pid) do
+    case LiveviewStream.get_latest_frame(stream_pid) do
+      {:ok, frame_binary} ->
+        process_preview_frame(state, frame_binary, "image/jpeg")
+
+      {:error, :no_frame} ->
+        state
+    end
+  end
+
+  defp process_preview_frame(state, binary, content_type) do
+    case store_preview_in_session(binary, content_type, state) do
+      {:ok, url, dims} ->
+        push_frame_to_outline(state.outline_server, binary, dims)
+        new_interf = State.set_preview_frame(state.interf_state, url, dims)
+        new_state = %{state | interf_state: new_interf}
+        broadcast(new_state)
+        process_dft_preview(new_state)
+
+      {:error, reason} ->
+        Logger.warning("[InterfServer] Failed to process preview frame: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp stop_liveview_stream(%{liveview_stream: nil} = state), do: state
+
+  defp stop_liveview_stream(%{liveview_stream: stream_pid} = state) when is_pid(stream_pid) do
+    Logger.info("[InterfServer] Stopping liveview stream")
+    LiveviewStream.stop(stream_pid)
+    %{state | liveview_stream: nil}
+  end
+
+  defp stop_liveview_stream(state), do: state
 
   defp broadcast(state) do
     topic = Topics.interferometry(state.session_id)

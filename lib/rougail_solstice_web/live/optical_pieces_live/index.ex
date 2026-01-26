@@ -5,12 +5,32 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
   alias RougailSolstice.OpticalPieces.OpticalPiece
   alias RougailSolstice.Robot.CameraAdapter.Canon
 
+  @poll_interval_ms 5_000
+
   @impl true
   def mount(_params, _session, socket) do
+    if connected?(socket), do: schedule_camera_poll()
+
     {:ok,
      socket
      |> assign(:optical_pieces, OpticalPieces.list_optical_pieces())
-     |> assign(:detected_cameras, [])}
+     |> assign(:detected_cameras, [])
+     |> assign(:connected_ports, fetch_connected_ports())}
+  end
+
+  @impl true
+  def handle_info(:poll_cameras, socket) do
+    schedule_camera_poll()
+    {:noreply, assign(socket, :connected_ports, fetch_connected_ports())}
+  end
+
+  defp schedule_camera_poll, do: Process.send_after(self(), :poll_cameras, @poll_interval_ms)
+
+  defp fetch_connected_ports do
+    case Canon.detect_cameras() do
+      {:ok, cameras} -> MapSet.new(cameras, & &1.port)
+      {:error, _} -> MapSet.new()
+    end
   end
 
   @impl true
@@ -57,13 +77,29 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
   end
 
   def handle_event("detect_cameras", _params, socket) do
-    cameras =
-      case Canon.detect_cameras() do
-        {:ok, cameras} -> cameras
-        {:error, _} -> []
-      end
+    case Canon.detect_cameras() do
+      {:ok, cameras} ->
+        {:noreply,
+         socket
+         |> assign(:detected_cameras, cameras)
+         |> assign(:connected_ports, MapSet.new(cameras, & &1.port))}
 
-    {:noreply, assign(socket, :detected_cameras, cameras)}
+      {:error, _} ->
+        {:noreply,
+         socket
+         |> assign(:detected_cameras, [])
+         |> assign(:connected_ports, MapSet.new())}
+    end
+  end
+
+  def handle_event("assign_camera", %{"port" => port, "model" => model}, socket) do
+    params = %{"camera_port" => port, "camera_model" => model}
+
+    changeset =
+      socket.assigns.optical_piece
+      |> OpticalPieces.change_optical_piece(Map.merge(socket.assigns.form.params || %{}, params))
+
+    {:noreply, assign(socket, :form, to_form(changeset))}
   end
 
   def handle_event("validate", %{"optical_piece" => params}, socket) do
@@ -150,8 +186,20 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
               <div class="text-sm text-gray-600">
                 Conic: {op.conic} | Obstruction: {Float.round(op.obstruction * 100, 1)}%
               </div>
-              <div :if={op.camera_port} class="text-sm text-gray-600">
-                Camera: {op.camera_model || "Unknown"} @ {op.camera_port}
+              <div :if={op.camera_port} class="text-sm text-gray-600 flex items-center gap-1.5">
+                <span class={[
+                  "inline-block w-2 h-2 rounded-full",
+                  if(MapSet.member?(@connected_ports, op.camera_port),
+                    do: "bg-green-500",
+                    else: "bg-red-500"
+                  )
+                ]} /> Camera: {op.camera_model || "Unknown"} @ {op.camera_port}
+                <span
+                  :if={!MapSet.member?(@connected_ports, op.camera_port)}
+                  class="text-red-500 text-xs"
+                >
+                  (disconnected)
+                </span>
               </div>
               <div :if={!op.camera_port} class="text-sm text-gray-400 italic">No camera assigned</div>
               <div :if={op.notes} class="text-sm text-gray-500 mt-1">{op.notes}</div>
@@ -231,9 +279,17 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
         </div>
 
         <div :if={@detected_cameras != []} class="mb-2 text-sm text-gray-600">
-          Detected cameras:
+          Detected cameras (click to assign):
           <ul class="list-disc ml-4">
-            <li :for={cam <- @detected_cameras}>{cam.model} @ {cam.port}</li>
+            <li
+              :for={cam <- @detected_cameras}
+              phx-click="assign_camera"
+              phx-value-port={cam.port}
+              phx-value-model={cam.model}
+              class="cursor-pointer hover:text-blue-600 hover:underline"
+            >
+              {cam.model} @ {cam.port}
+            </li>
           </ul>
         </div>
 

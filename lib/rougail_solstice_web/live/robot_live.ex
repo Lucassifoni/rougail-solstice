@@ -115,7 +115,8 @@ defmodule RougailSolsticeWeb.RobotLive do
     {:noreply, socket}
   end
 
-  def handle_event("change_adapter", %{"adapter" => adapter_name}, socket) do
+  def handle_event("change_adapter", params, socket) do
+    adapter_name = params["adapter"] || params["value"]
     adapter = CameraAdapter.get_by_name(adapter_name)
 
     socket =
@@ -607,6 +608,7 @@ defmodule RougailSolsticeWeb.RobotLive do
         <select
           name="adapter"
           phx-change="change_adapter"
+          phx-blur="change_adapter"
           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option

@@ -3,9 +3,14 @@ defmodule RougailSolstice.Interferometry.ServerTest do
 
   alias RougailSolstice.Interferometry
   alias RougailSolstice.Interferometry.Server
+  alias RougailSolstice.Robot.Server, as: RobotServer
 
   setup do
-    {:ok, pid} = start_supervised({Server, name: :test_interf_server})
+    {:ok, _robot_pid} = start_supervised({RobotServer, name: :test_robot_server})
+
+    {:ok, pid} =
+      start_supervised({Server, name: :test_interf_server, robot_server: :test_robot_server})
+
     Server.subscribe(nil)
     %{server: pid}
   end

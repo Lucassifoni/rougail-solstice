@@ -10,7 +10,7 @@ defmodule RougailSolstice.CommandsTest do
     interf_name = :"interf_#{System.unique_integer([:positive])}"
 
     start_supervised!({RobotServer, name: robot_name})
-    start_supervised!({InterfServer, name: interf_name})
+    start_supervised!({InterfServer, name: interf_name, robot_server: robot_name})
 
     %{robot: robot_name, interf: interf_name}
   end

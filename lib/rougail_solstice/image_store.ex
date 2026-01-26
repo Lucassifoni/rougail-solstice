@@ -67,13 +67,21 @@ defmodule RougailSolstice.ImageStore do
   @spec extract_key(String.t()) :: {:ok, String.t()} | :error
   def extract_key("/sessions/" <> rest) do
     case String.split(rest, "/images/", parts: 2) do
-      [_session_id, key] -> {:ok, key}
+      [_session_id, key] -> {:ok, strip_query_params(key)}
       _ -> :error
     end
   end
 
-  def extract_key("/images/" <> key), do: {:ok, key}
+  def extract_key("/images/" <> key), do: {:ok, strip_query_params(key)}
   def extract_key(_), do: :error
+
+  defp strip_query_params(key) do
+    key
+    |> String.split("?")
+    |> List.first()
+    |> String.split("#")
+    |> List.first()
+  end
 
   @doc """
   Fetches binary data from a session URL.

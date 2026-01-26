@@ -127,6 +127,28 @@ defmodule RougailSolstice.Robot.CameraAdapter.Canon do
     end
   end
 
+  @doc """
+  Returns whether this adapter supports continuous liveview streaming.
+  Canon cameras support streaming via gphoto2 --capture-movie --stdout.
+  """
+  @spec supports_streaming?() :: boolean()
+  def supports_streaming?, do: true
+
+  @spec supports_streaming?(t()) :: boolean()
+  def supports_streaming?(%__MODULE__{}), do: true
+
+  @doc """
+  Returns the gphoto2 command arguments for starting a liveview stream.
+  """
+  @spec streaming_args(t() | nil) :: [String.t()]
+  def streaming_args(nil), do: [@gphoto2, "--capture-movie", "--stdout"]
+
+  def streaming_args(%__MODULE__{port: nil}), do: streaming_args(nil)
+
+  def streaming_args(%__MODULE__{port: port}) do
+    [@gphoto2, "--port", port, "--capture-movie", "--stdout"]
+  end
+
   defp add_port_args(args, nil), do: args
   defp add_port_args(args, port), do: ["--port", port | args]
 
