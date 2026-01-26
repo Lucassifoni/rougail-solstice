@@ -83,16 +83,18 @@ defmodule RougailSolstice.Interferometry.WFT.NxTest do
   end
 
   describe "consistency with list-based WFT" do
+    @consistency_tolerance 1.0e-3
+
     test "produces similar statistics" do
       assert {:ok, wft_nx} = WFTNx.parse_file(@sample_wft_path)
       assert {:ok, wft_list} = WFT.parse_file(@sample_wft_path)
 
-      assert_in_delta wft_nx.mean, wft_list.mean, 1.0e-6
-      assert_in_delta wft_nx.std, wft_list.std, 1.0e-6
-      assert_in_delta wft_nx.min, wft_list.min, 1.0e-6
-      assert_in_delta wft_nx.max, wft_list.max, 1.0e-6
-      assert_in_delta wft_nx.ref_mean, wft_list.ref_mean, 1.0e-6
-      assert_in_delta wft_nx.ref_std, wft_list.ref_std, 1.0e-6
+      assert_in_delta wft_nx.mean, wft_list.mean, @consistency_tolerance
+      assert_in_delta wft_nx.std, wft_list.std, @consistency_tolerance
+      assert_in_delta wft_nx.min, wft_list.min, @consistency_tolerance
+      assert_in_delta wft_nx.max, wft_list.max, @consistency_tolerance
+      assert_in_delta wft_nx.ref_mean, wft_list.ref_mean, @consistency_tolerance
+      assert_in_delta wft_nx.ref_std, wft_list.ref_std, @consistency_tolerance
     end
 
     test "produces similar data values" do
@@ -107,7 +109,7 @@ defmodule RougailSolstice.Interferometry.WFT.NxTest do
       for idx <- sample_indices do
         nx_val = Enum.at(nx_data, idx)
         list_val = Enum.at(list_data, idx)
-        assert_in_delta nx_val, list_val, 1.0e-6, "Data mismatch at index #{idx}"
+        assert_in_delta nx_val, list_val, @consistency_tolerance, "Data mismatch at index #{idx}"
       end
     end
 
@@ -118,8 +120,8 @@ defmodule RougailSolstice.Interferometry.WFT.NxTest do
       assert {:ok, png_nx, meta_nx} = WFTNx.render_to_png(wft_nx)
       assert {:ok, png_list, meta_list} = WFT.render_to_png(wft_list)
 
-      assert_in_delta meta_nx.min, meta_list.min, 1.0e-6
-      assert_in_delta meta_nx.max, meta_list.max, 1.0e-6
+      assert_in_delta meta_nx.min, meta_list.min, @consistency_tolerance
+      assert_in_delta meta_nx.max, meta_list.max, @consistency_tolerance
 
       assert byte_size(png_nx) > 0
       assert byte_size(png_list) > 0

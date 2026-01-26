@@ -2,17 +2,70 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
   @moduledoc """
   Nx-accelerated implementation of WFT (WaveFronT) parsing and rendering.
 
-  This module provides the same interface as `RougailSolstice.Interferometry.WFT`
-  but uses Nx tensors for numerical operations, leveraging EXLA for acceleration.
+  ## What is a Wavefront File?
 
-  Key optimizations:
-  - Vectorized Zernike fitting using Nx.LinAlg.solve
-  - Fully tensorized per-pixel operations (no nested comprehensions)
-  - Native Nx statistics (mean, variance, min, max)
-  - Vectorized colormap interpolation
+  A WFT (WaveFronT) file contains the measured optical surface error of a mirror
+  or lens, extracted from interferometric analysis. Each pixel value represents
+  the deviation from a perfect surface at that point, typically in units of
+  "waves" (fractions of the test wavelength).
+
+  The file format contains:
+  - Dimensions (width × height)
+  - Per-pixel surface deviation values (0 = invalid/masked pixel)
+  - Metadata: aperture circle, diameter, radius of curvature, wavelength
+
+  ## Processing Pipeline
+
+  When parsing a WFT file, this module performs:
+
+  1. **Parse dimensions and data**: Read width, height, and the 2D grid of values
+  2. **Build validity mask**: Mark pixels with actual data (non-zero values)
+  3. **Parse metadata**: Extract aperture geometry, physical dimensions, wavelength
+  4. **Zernike fitting**: Decompose the wavefront into Zernike polynomials
+  5. **Zernike nulling**: Subtract alignment-related aberrations (tilt, focus, etc.)
+  6. **Software null**: Apply theoretical spherical aberration correction for
+     non-spherical test geometry (conic constant correction)
+  7. **Compute statistics**: Calculate min, max, mean, standard deviation
+
+  ## What is "Nulling"?
+
+  Raw wavefront data includes many sources of error:
+  - **Piston**: Overall offset (irrelevant to image quality)
+  - **Tilt**: Alignment error of the test setup
+  - **Defocus**: Focus adjustment error
+  - **Astigmatism from setup**: Test geometry, not the optic itself
+  - **Actual mirror errors**: What we want to measure!
+
+  "Nulling" means subtracting the alignment-related aberrations (piston, tilt,
+  focus, astigmatism) so that only the inherent mirror figure error remains.
+  The `enables` map controls which Zernike terms are nulled (subtracted).
+
+  ## Software Null (Conic Correction)
+
+  When testing a parabolic or hyperbolic mirror at center of curvature,
+  the geometry introduces spherical aberration even for a perfect mirror.
+  The "software null" calculates and removes this expected spherical component
+  based on the mirror's diameter, radius of curvature, wavelength, and conic
+  constant.
+
+  Formula: Z8_null = (D^4 × 10^6) / (384 × ROC^3 × λ) × conic
+
+  Where:
+  - D = mirror diameter (mm)
+  - ROC = radius of curvature (mm)
+  - λ = wavelength (nm)
+  - conic = conic constant (-1 for parabola, 0 for sphere)
+
+  ## Rendering
+
+  The `render_to_png/2` function converts the processed wavefront to a false-color
+  PNG image using a custom colormap. The color scale is based on statistical
+  analysis (mean ± 3σ) to show meaningful detail.
   """
 
   require Logger
+
+  alias RougailSolstice.Interferometry.Zernike
 
   @type wavefront :: %{
           width: pos_integer(),
@@ -32,7 +85,7 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
           ref_std: float()
         }
 
-  @num_zernike_terms 9
+  @default_zernike_terms 9
 
   @spec parse_file(Path.t(), keyword()) :: {:ok, wavefront()} | {:error, term()}
   def parse_file(path, opts \\ []) do
@@ -46,6 +99,7 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
   def parse(content, opts \\ []) do
     apply_null = Keyword.get(opts, :apply_null, true)
     conic = Keyword.get(opts, :conic, -1.0)
+    num_zernike_terms = Keyword.get(opts, :zernike_terms, @default_zernike_terms)
     lines = String.split(content, "\n", trim: true)
 
     with {:ok, width, height, rest} <- parse_dimensions(lines),
@@ -63,7 +117,7 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
       {final_data, ref_mean, ref_std} =
         if apply_null do
           {nulled_data, reference_surface} =
-            apply_zernike_null(data, mask, outside, software_null)
+            apply_zernike_null(data, mask, outside, software_null, num_zernike_terms)
 
           {_ref_min, _ref_max, ref_mean, ref_std} = compute_statistics(reference_surface, mask)
           {nulled_data, ref_mean, ref_std}
@@ -248,166 +302,165 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
     val
   end
 
+  # ==========================================================================
+  # SOFTWARE NULL COMPUTATION
+  # ==========================================================================
+  # When testing a conic mirror (parabola, hyperbola) at its center of curvature,
+  # the test geometry introduces spherical aberration even if the mirror is perfect.
+  # This is because the reference wavefront from the interferometer is spherical,
+  # but the mirror deviates from a sphere by design.
+  #
+  # The software null calculates the expected Z8 (primary spherical) coefficient
+  # so it can be subtracted from the measured data, leaving only the manufacturing
+  # errors.
+  #
+  # Formula derivation:
+  # For a conic mirror tested at center of curvature, the wavefront error
+  # follows the Seidel aberration formula. The Z8 Zernike coefficient is:
+  #
+  #   Z8 = (D^4 × 10^6) / (384 × ROC^3 × λ) × conic_constant
+  #
+  # Where:
+  #   D = mirror diameter in mm
+  #   ROC = radius of curvature in mm
+  #   λ = test wavelength in nm
+  #   conic_constant = -1 for parabola, 0 for sphere, -k for hyperbola
+  #
+  # For a sphere (conic = 0), no correction is needed.
+  # For a parabola (conic = -1), significant negative spherical is expected.
+  # ==========================================================================
   defp compute_software_null(nil, _roc, _lambda, _conic), do: 0.0
   defp compute_software_null(_diameter, nil, _lambda, _conic), do: 0.0
   defp compute_software_null(_diameter, _roc, nil, _conic), do: 0.0
   defp compute_software_null(_diameter, _roc, _lambda, 0.0), do: 0.0
 
   defp compute_software_null(diameter, roc, lambda, conic) do
+    # Base Z8 coefficient from Seidel theory (before conic scaling)
+    # The 10^6 factor converts units to waves
     z8_computed = :math.pow(diameter, 4) * 1_000_000.0 / (384.0 * :math.pow(roc, 3) * lambda)
+    # Scale by conic constant: parabola=-1 gives full correction, sphere=0 gives none
     z8_computed * conic
   end
 
-  defp apply_zernike_null(data, mask, outside, software_null) do
-    coefficients = fit_zernikes(data, mask, outside, @num_zernike_terms)
-    enables = default_null_enables()
-    nulled_data = subtract_zernikes(data, mask, outside, coefficients, enables, software_null)
+  # ==========================================================================
+  # ZERNIKE NULLING PIPELINE
+  # ==========================================================================
+  # This function orchestrates the wavefront nulling process:
+  # 1. Fit Zernike polynomials to the raw data (find how much of each aberration)
+  # 2. Subtract "enabled" aberrations (alignment errors we want to remove)
+  # 3. Apply the software null (theoretical spherical aberration from test geometry)
+  # 4. Reconstruct a "reference surface" from non-nulled terms (the actual mirror errors)
+  # ==========================================================================
+  defp apply_zernike_null(data, mask, outside, software_null, num_terms) do
+    # Step 1: Fit Zernike polynomials to find coefficients
+    # This tells us "how much" of each aberration type is present
+    coefficients = Zernike.fit(data, mask, outside, num_terms)
 
+    # Define which terms to subtract (enables map)
+    enables = default_null_enables(num_terms)
+
+    {height, width} = Nx.shape(data)
+    {rho, theta} = Zernike.polar_grid(width, height, outside.cx, outside.cy, outside.rx)
+
+    # Step 2: Subtract enabled Zernike terms + software null from the data
+    nulled_data = subtract_zernikes(data, mask, rho, theta, coefficients, enables, software_null)
+
+    # Step 3: Build reference surface from the terms we DIDN'T null
+    # This represents the actual mirror figure error
     reference_surface =
-      reconstruct_reference_surface(mask, outside, coefficients, enables, software_null)
+      reconstruct_reference_surface(mask, rho, theta, coefficients, enables, software_null)
 
     {nulled_data, reference_surface}
   end
 
-  defp default_null_enables do
-    %{
+  # ==========================================================================
+  # DEFAULT NULL ENABLES
+  # ==========================================================================
+  # Defines which Zernike terms should be subtracted ("nulled") from the wavefront.
+  #
+  # true  = subtract this term (it's an alignment error, not a mirror defect)
+  # false = keep this term (it represents actual mirror figure error)
+  #
+  # Standard nulling removes:
+  #   Z0: Piston (constant offset, meaningless)
+  #   Z1, Z2: Tilt X/Y (alignment of mirror in test setup)
+  #   Z3: Defocus (focus adjustment error)
+  #   Z6, Z7: Coma X/Y (often from alignment, though can be mirror error)
+  #
+  # Standard nulling keeps:
+  #   Z4, Z5: Astigmatism (usually a real mirror defect)
+  #   Z8: Primary Spherical (the most important mirror figure error!)
+  #   Z9+: Higher-order terms (real surface details)
+  # ==========================================================================
+  defp default_null_enables(num_terms) do
+    base_enables = %{
+      # Piston - always null (meaningless offset)
       0 => true,
+      # Tilt X - alignment error
       1 => true,
+      # Tilt Y - alignment error
       2 => true,
+      # Defocus - focus adjustment
       3 => true,
+      # Astigmatism 0° - usually real mirror error
       4 => false,
+      # Astigmatism 45° - usually real mirror error
       5 => false,
+      # Coma X - often alignment (can be disabled if coma is real)
       6 => true,
+      # Coma Y - often alignment
       7 => true,
+      # Primary Spherical - THE key mirror figure term, never null
       8 => false
     }
+
+    # Higher-order terms (Z9+) are not nulled by default
+    Enum.reduce(9..(num_terms - 1), base_enables, fn i, acc ->
+      Map.put(acc, i, false)
+    end)
   end
 
-  defp fit_zernikes(data, mask, outside, num_terms) do
+  # ==========================================================================
+  # ZERNIKE SUBTRACTION
+  # ==========================================================================
+  # Subtracts the "enabled" Zernike terms from the wavefront data.
+  # This removes alignment-related aberrations, leaving only the actual mirror errors.
+  #
+  # The subtracted surface is:
+  #   contribution = Σ (enabled_coef[i] × Z_i) + software_null × Z8
+  #
+  # Where enabled_coef[i] = coefficient[i] if enabled, else 0.
+  # The software_null term is always subtracted from Z8 regardless of enable state.
+  # ==========================================================================
+  defp subtract_zernikes(data, mask, rho, theta, coefficients, enables, software_null) do
     {height, width} = Nx.shape(data)
+    num_terms = length(coefficients)
 
-    cx = outside.cx
-    cy = outside.cy
-    radius = outside.rx
+    # Pre-compute all Zernike surfaces (one 2D surface per term)
+    zernike_surfaces = Zernike.compute_surfaces(rho, theta, num_terms)
 
-    step = max(1, div(width, 100))
-
-    y_coords = Nx.iota({height, width}, axis: 0, type: :f64)
-    x_coords = Nx.iota({height, width}, axis: 1, type: :f64)
-
-    ux = Nx.divide(Nx.subtract(x_coords, cx), radius)
-    uy = Nx.divide(Nx.subtract(y_coords, cy), radius)
-    rho = Nx.sqrt(Nx.add(Nx.pow(ux, 2), Nx.pow(uy, 2)))
-    theta = Nx.atan2(uy, ux)
-
-    valid_mask =
-      mask
-      |> Nx.equal(255)
-      |> Nx.logical_and(Nx.not_equal(data, 0.0))
-      |> Nx.logical_and(Nx.less_equal(rho, 1.0))
-
-    y_sample = Nx.iota({height}, type: :s32)
-    x_sample = Nx.iota({width}, type: :s32)
-    y_keep = Nx.remainder(y_sample, step) |> Nx.equal(0)
-    x_keep = Nx.remainder(x_sample, step) |> Nx.equal(0)
-
-    sample_mask =
-      Nx.outer(y_keep, x_keep)
-      |> Nx.as_type(:u8)
-      |> Nx.logical_and(valid_mask)
-
-    flat_sample_mask = Nx.flatten(sample_mask)
-    num_valid = Nx.sum(flat_sample_mask) |> Nx.to_number() |> round()
-
-    if num_valid < num_terms do
-      List.duplicate(0.0, num_terms)
-    else
-      flat_rho = Nx.flatten(rho)
-      flat_theta = Nx.flatten(theta)
-      flat_data = Nx.flatten(data)
-
-      sample_indices =
-        flat_sample_mask
-        |> Nx.as_type(:s32)
-        |> Nx.argsort(direction: :desc)
-
-      take_indices = Nx.slice(sample_indices, [0], [num_valid])
-
-      sample_rho = Nx.take(flat_rho, take_indices)
-      sample_theta = Nx.take(flat_theta, take_indices)
-      sample_vals = Nx.take(flat_data, take_indices)
-
-      design_matrix = build_zernike_design_matrix(sample_rho, sample_theta, num_terms)
-
-      solve_least_squares_nx(design_matrix, sample_vals)
-    end
-  end
-
-  defp build_zernike_design_matrix(rho, theta, _num_terms) do
-    rho2 = Nx.pow(rho, 2)
-    cos_theta = Nx.cos(theta)
-    sin_theta = Nx.sin(theta)
-    cos_2theta = Nx.cos(Nx.multiply(theta, 2.0))
-    sin_2theta = Nx.sin(Nx.multiply(theta, 2.0))
-
-    z0 = Nx.broadcast(1.0, Nx.shape(rho))
-    z1 = Nx.multiply(rho, cos_theta)
-    z2 = Nx.multiply(rho, sin_theta)
-    z3 = Nx.add(Nx.multiply(rho2, 2.0), -1.0)
-    z4 = Nx.multiply(rho2, cos_2theta)
-    z5 = Nx.multiply(rho2, sin_2theta)
-    z6 = Nx.multiply(Nx.multiply(rho, Nx.add(Nx.multiply(rho2, 3.0), -2.0)), cos_theta)
-    z7 = Nx.multiply(Nx.multiply(rho, Nx.add(Nx.multiply(rho2, 3.0), -2.0)), sin_theta)
-    z8 = Nx.add(1.0, Nx.multiply(rho2, Nx.add(Nx.multiply(rho2, 6.0), -6.0)))
-
-    Nx.stack([z0, z1, z2, z3, z4, z5, z6, z7, z8], axis: 1)
-  end
-
-  defp solve_least_squares_nx(design_matrix, values) do
-    a_t = Nx.transpose(design_matrix)
-    ata = Nx.dot(a_t, design_matrix)
-    atb = Nx.dot(a_t, values)
-
-    regularization = Nx.multiply(Nx.eye(9, type: :f64), 1.0e-10)
-    ata_reg = Nx.add(ata, regularization)
-
-    solution = Nx.LinAlg.solve(ata_reg, atb)
-    Nx.to_flat_list(solution)
-  end
-
-  defp subtract_zernikes(data, mask, outside, coefficients, enables, software_null) do
-    {height, width} = Nx.shape(data)
-
-    cx = outside.cx
-    cy = outside.cy
-    radius = outside.rx
-
-    y_coords = Nx.iota({height, width}, axis: 0, type: :f64)
-    x_coords = Nx.iota({height, width}, axis: 1, type: :f64)
-
-    ux = Nx.divide(Nx.subtract(x_coords, cx), radius)
-    uy = Nx.divide(Nx.subtract(y_coords, cy), radius)
-    rho = Nx.sqrt(Nx.add(Nx.pow(ux, 2), Nx.pow(uy, 2)))
-    theta = Nx.atan2(uy, ux)
-
-    zernike_surfaces = compute_zernike_surfaces(rho, theta)
-
+    # Build coefficient array with zeros for disabled terms
     enabled_coeffs =
-      Enum.map(0..8, fn i ->
+      Enum.map(0..(num_terms - 1), fn i ->
         if Map.get(enables, i, false), do: Enum.at(coefficients, i), else: 0.0
       end)
 
+    # Sum up the contribution of all enabled Zernike terms
+    # contribution = c0×Z0 + c1×Z1 + ... where ci=0 if not enabled
     zern_contribution =
       Enum.zip(zernike_surfaces, enabled_coeffs)
       |> Enum.reduce(Nx.broadcast(0.0, {height, width}), fn {surface, coef}, acc ->
         Nx.add(acc, Nx.multiply(surface, coef))
       end)
 
+    # Add software null contribution (always applied to Z8 / spherical aberration)
     z8_surface = Enum.at(zernike_surfaces, 8)
     software_contribution = Nx.multiply(z8_surface, software_null)
 
+    # Subtract both contributions from the raw data
     nulled = Nx.subtract(data, Nx.add(zern_contribution, software_contribution))
 
+    # Only apply nulling to valid pixels inside the aperture
     valid_for_null =
       mask
       |> Nx.equal(255)
@@ -417,39 +470,44 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
     Nx.select(valid_for_null, nulled, data)
   end
 
-  defp reconstruct_reference_surface(mask, outside, coefficients, enables, software_null) do
+  # ==========================================================================
+  # REFERENCE SURFACE RECONSTRUCTION
+  # ==========================================================================
+  # Reconstructs the "reference surface" - the wavefront that represents
+  # the actual mirror errors (terms we DIDN'T null).
+  #
+  # This is the inverse of what we subtracted: it shows the aberrations
+  # that remain after nulling, which represent the actual optical quality.
+  #
+  # Used to compute statistics on the processed wavefront.
+  # ==========================================================================
+  defp reconstruct_reference_surface(mask, rho, theta, coefficients, enables, software_null) do
     {height, width} = Nx.shape(mask)
+    num_terms = length(coefficients)
 
-    cx = outside.cx
-    cy = outside.cy
-    radius = outside.rx
+    zernike_surfaces = Zernike.compute_surfaces(rho, theta, num_terms)
 
-    y_coords = Nx.iota({height, width}, axis: 0, type: :f64)
-    x_coords = Nx.iota({height, width}, axis: 1, type: :f64)
-
-    ux = Nx.divide(Nx.subtract(x_coords, cx), radius)
-    uy = Nx.divide(Nx.subtract(y_coords, cy), radius)
-    rho = Nx.sqrt(Nx.add(Nx.pow(ux, 2), Nx.pow(uy, 2)))
-    theta = Nx.atan2(uy, ux)
-
-    zernike_surfaces = compute_zernike_surfaces(rho, theta)
-
+    # Use coefficients for DISABLED terms only (the ones we kept)
     disabled_coeffs =
-      Enum.map(0..8, fn i ->
+      Enum.map(0..(num_terms - 1), fn i ->
         if Map.get(enables, i, false), do: 0.0, else: Enum.at(coefficients, i)
       end)
 
+    # Sum up contribution of non-nulled Zernike terms
     base_contribution =
       Enum.zip(zernike_surfaces, disabled_coeffs)
       |> Enum.reduce(Nx.broadcast(0.0, {height, width}), fn {surface, coef}, acc ->
         Nx.add(acc, Nx.multiply(surface, coef))
       end)
 
+    # Subtract software null from reference (it was subtracted from data, so
+    # we need to account for it here too for the reference to match)
     z8_surface = Enum.at(zernike_surfaces, 8)
     software_contribution = Nx.multiply(z8_surface, software_null)
 
     ref_surface = Nx.subtract(base_contribution, software_contribution)
 
+    # Apply validity mask
     valid_mask =
       mask
       |> Nx.equal(255)
@@ -458,27 +516,16 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
     Nx.select(valid_mask, ref_surface, 0.0)
   end
 
-  defp compute_zernike_surfaces(rho, theta) do
-    rho2 = Nx.pow(rho, 2)
-    cos_theta = Nx.cos(theta)
-    sin_theta = Nx.sin(theta)
-    cos_2theta = Nx.cos(Nx.multiply(theta, 2.0))
-    sin_2theta = Nx.sin(Nx.multiply(theta, 2.0))
-
-    [
-      Nx.broadcast(1.0, Nx.shape(rho)),
-      Nx.multiply(rho, cos_theta),
-      Nx.multiply(rho, sin_theta),
-      Nx.add(Nx.multiply(rho2, 2.0), -1.0),
-      Nx.multiply(rho2, cos_2theta),
-      Nx.multiply(rho2, sin_2theta),
-      Nx.multiply(Nx.multiply(rho, Nx.add(Nx.multiply(rho2, 3.0), -2.0)), cos_theta),
-      Nx.multiply(Nx.multiply(rho, Nx.add(Nx.multiply(rho2, 3.0), -2.0)), sin_theta),
-      Nx.add(1.0, Nx.multiply(rho2, Nx.add(Nx.multiply(rho2, 6.0), -6.0)))
-    ]
-  end
-
+  # ==========================================================================
+  # MASKED STATISTICS COMPUTATION
+  # ==========================================================================
+  # Computes min, max, mean, and standard deviation over only the valid pixels
+  # (inside the aperture mask). Invalid pixels are excluded from all calculations.
+  #
+  # Returns: {min, max, mean, std_dev}
+  # ==========================================================================
   defp compute_statistics(data, mask) do
+    # Convert mask to float for mathematical operations (255 → 1.0, 0 → 0.0)
     valid_mask =
       mask
       |> Nx.equal(255)
@@ -489,11 +536,12 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
     if count == 0 do
       {0.0, 0.0, 0.0, 0.01}
     else
+      # MEAN: sum of valid values / count of valid pixels
       masked_data = Nx.multiply(data, valid_mask)
-
       sum = Nx.sum(masked_data) |> Nx.to_number()
       mean = sum / count
 
+      # MIN: replace invalid pixels with +infinity so they don't affect reduce_min
       masked_for_minmax =
         Nx.select(
           Nx.equal(mask, 255),
@@ -503,6 +551,7 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
 
       min_val = Nx.reduce_min(masked_for_minmax) |> Nx.to_number()
 
+      # MAX: replace invalid pixels with -infinity so they don't affect reduce_max
       masked_for_max =
         Nx.select(
           Nx.equal(mask, 255),
@@ -512,9 +561,12 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
 
       max_val = Nx.reduce_max(masked_for_max) |> Nx.to_number()
 
+      # STANDARD DEVIATION: sqrt(mean((x - mean)²))
+      # Only computed over valid pixels
       diff_squared = Nx.pow(Nx.subtract(data, mean), 2)
       masked_diff_squared = Nx.multiply(diff_squared, valid_mask)
       variance = Nx.sum(masked_diff_squared) |> Nx.to_number() |> Kernel./(count)
+      # Minimum 0.01 to avoid division by zero
       std = max(:math.sqrt(variance), 0.01)
 
       {min_val, max_val, mean, std}
@@ -562,67 +614,130 @@ defmodule RougailSolstice.Interferometry.WFT.Nx do
       {:error, {:render_error, e}}
   end
 
+  # ==========================================================================
+  # Z-RANGE COMPUTATION FOR DISPLAY
+  # ==========================================================================
+  # Determines the value range for the color scale using mean ± 3σ.
+  # This captures 99.7% of values in a normal distribution, which works well
+  # for wavefront data that typically has a Gaussian-like distribution.
+  #
+  # Using statistics rather than raw min/max prevents outliers from
+  # compressing the useful part of the color scale.
+  # ==========================================================================
   defp compute_z_range(mean, std) do
     z_min = mean - 3 * std
     z_max = mean + 3 * std
     {z_min, z_max}
   end
 
+  # ==========================================================================
+  # VECTORIZED FALSE-COLOR COLORMAP
+  # ==========================================================================
+  # Converts normalized wavefront values [0,1] to RGB colors using a custom
+  # colormap designed for optical surface visualization.
+  #
+  # The colormap is defined by control points (positions) and their colors:
+  #
+  #   Position   Color           Meaning in optical testing
+  #   --------   -----           --------------------------
+  #   0.00       Black           Minimum value (worst low)
+  #   0.15       Blue            Significant low zone
+  #   0.25       Cyan            Moderate low zone
+  #   0.50       Brown/Orange    Near neutral (mid-value)
+  #   0.75       Gray            Moderate high zone
+  #   0.90       Red             Significant high zone
+  #   0.99       Yellow          Near maximum (worst high)
+  #   1.00       White           Maximum value
+  #
+  # Values between control points are linearly interpolated.
+  #
+  # Algorithm (vectorized for performance):
+  # 1. Find which segment each pixel falls into (between which control points)
+  # 2. Compute interpolation ratio within that segment
+  # 3. Linearly interpolate RGB between the two bounding colors
+  # ==========================================================================
   defp apply_colormap_vectorized(t, mask) do
+    # Colormap control points (normalized positions 0-1)
     positions = Nx.tensor([0.00, 0.15, 0.25, 0.50, 0.75, 0.90, 0.99, 1.00], type: :f32)
 
+    # RGB colors at each control point
     colors =
       Nx.tensor(
         [
+          # Black at 0.00
           [0, 0, 0],
+          # Blue at 0.15
           [0, 0, 255],
+          # Cyan at 0.25
           [0, 255, 255],
+          # Brown/Orange at 0.50
           [150, 60, 0],
+          # Gray at 0.75
           [160, 160, 160],
+          # Red at 0.90
           [255, 0, 0],
+          # Yellow at 0.99
           [255, 255, 0],
+          # White at 1.00
           [255, 255, 255]
         ],
         type: :f32
       )
 
+    # Flatten for vectorized processing
     t_flat = Nx.flatten(t) |> Nx.as_type(:f32)
     n = Nx.size(t_flat)
 
+    # Find which colormap segment each pixel falls into
+    # ge_mask[i,j] = true if pixel[i] >= position[j]
     expanded_t = Nx.reshape(t_flat, {n, 1})
     expanded_pos = Nx.reshape(positions, {1, 8})
 
     ge_mask = Nx.greater_equal(expanded_t, expanded_pos)
+    # high_idx = count of positions that pixel value exceeds
+    # This tells us which segment the pixel falls into
     high_idx = Nx.sum(Nx.as_type(ge_mask, :s32), axes: [1])
+    # Clamp to valid range
     high_idx = Nx.clip(high_idx, 1, 7)
     low_idx = Nx.subtract(high_idx, 1)
 
+    # Get the bounding positions and colors for each pixel's segment
     low_pos = Nx.take(positions, low_idx)
     high_pos = Nx.take(positions, high_idx)
     low_colors = Nx.take(colors, low_idx)
     high_colors = Nx.take(colors, high_idx)
 
+    # Compute interpolation ratio within each segment
+    # ratio = (value - low_pos) / (high_pos - low_pos)
     denom = Nx.subtract(high_pos, low_pos)
+    # Avoid divide by zero
     denom = Nx.select(Nx.less(denom, 1.0e-6), 1.0, denom)
     ratio = Nx.divide(Nx.subtract(t_flat, low_pos), denom)
     ratio = Nx.clip(ratio, 0.0, 1.0)
 
+    # Linear interpolation: color = low + ratio * (high - low)
     ratio_expanded = Nx.reshape(ratio, {n, 1})
 
     interpolated =
       Nx.add(low_colors, Nx.multiply(Nx.subtract(high_colors, low_colors), ratio_expanded))
 
+    # Reshape back to image dimensions
     shape = Nx.shape(t)
     rgb = Nx.reshape(interpolated, {elem(shape, 0), elem(shape, 1), 3})
 
+    # Apply mask (invalid pixels become black)
     mask_valid = Nx.equal(mask, 255)
     mask_3d = Nx.stack([mask_valid, mask_valid, mask_valid], axis: 2)
 
+    # Convert RGB to BGR for OpenCV/Evision compatibility
     bgr =
       Nx.stack(
         [
+          # B = original R
           rgb[[.., .., 2]],
+          # G stays G
           rgb[[.., .., 1]],
+          # R = original B
           rgb[[.., .., 0]]
         ],
         axis: 2

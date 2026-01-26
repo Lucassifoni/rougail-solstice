@@ -1,18 +1,51 @@
 defmodule RougailSolstice.Interferometry.DFT.Nx do
   @moduledoc """
-  Nx/Evision-based implementation of DFT preview generation.
+  Nx/Evision-based implementation of DFT (Discrete Fourier Transform) preview generation.
 
-  This module provides DFT magnitude spectrum visualization using Evision.dft
-  for the FFT and Nx for tensor operations. It serves as an alternative to the
-  C++ sidecar/CLI implementation.
+  ## What is DFT and Why Use It in Interferometry?
 
-  Key operations:
-  - Image cropping and resizing to DFT size
-  - Image mean subtraction (masked)
-  - Forward 2D DFT via Evision.dft
-  - Magnitude computation and log scaling
-  - Quadrant shift (center DC component)
-  - Normalization and PNG encoding
+  The Discrete Fourier Transform converts an image from "spatial domain" (pixel
+  brightness at each location) to "frequency domain" (how much of each spatial
+  frequency is present). In interferometry, this is useful because:
+
+  1. **Fringe analysis**: Interference fringes appear as distinct peaks in the
+     frequency spectrum. The spacing and orientation of fringes determines
+     where these peaks appear.
+
+  2. **Quality assessment**: A good interferogram shows clear, distinct frequency
+     peaks. Noise, vibration, or poor alignment spread energy across the spectrum.
+
+  3. **Spatial filtering**: You can identify and isolate specific fringe patterns
+     by their frequency signature.
+
+  ## How to Read a DFT Magnitude Image
+
+  The output is a grayscale image where:
+  - **Center (DC component)**: Represents the average brightness of the image
+  - **Distance from center**: Corresponds to spatial frequency (farther = finer details)
+  - **Direction from center**: Corresponds to the orientation of that frequency
+  - **Brightness**: How much of that frequency is present (log-scaled for visibility)
+
+  For interferograms with linear fringes:
+  - Fringes create bright spots symmetric about the center
+  - The spot's position indicates fringe spacing and angle
+  - Multiple spots indicate multiple fringe sets or harmonics
+
+  ## Processing Pipeline
+
+  1. **Crop and resize**: Extract the circular aperture region
+  2. **Mean subtraction**: Remove DC offset (otherwise center dominates)
+  3. **2D FFT**: Transform to frequency domain using Evision.dft (OpenCV)
+  4. **Magnitude**: Compute sqrt(real² + imag²) to get amplitude
+  5. **Log scaling**: Compress dynamic range: log(1 + magnitude)
+  6. **Quadrant shift**: Move DC component from corners to center
+  7. **Normalize**: Scale to 0-255 for display
+
+  ## Technical Notes
+
+  - Uses Evision (OpenCV bindings) for the FFT, which is highly optimized
+  - The FFT is O(N log N) per row/column, very fast even for large images
+  - Complex output has real and imaginary parts; we only display magnitude
   """
 
   require Logger
@@ -82,16 +115,27 @@ defmodule RougailSolstice.Interferometry.DFT.Nx do
     end
   end
 
+  # ==========================================================================
+  # CIRCULAR MASK GENERATION
+  # ==========================================================================
+  # Creates a binary mask marking pixels inside the circular aperture.
+  # Only pixels inside this mask contribute to the DFT (outside pixels are
+  # typically black background which would add noise to the spectrum).
+  # ==========================================================================
   defp make_mask(%Evision.Mat{} = img, %{cx: cx, cy: cy, r: r}) do
     {height, width} = get_dimensions(img)
 
+    # Create coordinate grids for all pixels
     y_coords = Nx.iota({height, width}, axis: 0, type: :f32)
     x_coords = Nx.iota({height, width}, axis: 1, type: :f32)
 
+    # Compute normalized distance from center for each pixel
+    # Dividing by r makes the aperture edge have distance = 1.0
     dx = Nx.divide(Nx.subtract(x_coords, cx), r)
     dy = Nx.divide(Nx.subtract(y_coords, cy), r)
     dist_sq = Nx.add(Nx.multiply(dx, dx), Nx.multiply(dy, dy))
 
+    # Pixels with distance² <= 1 are inside the circle
     mask_tensor =
       dist_sq
       |> Nx.less_equal(1.0)
@@ -101,36 +145,64 @@ defmodule RougailSolstice.Interferometry.DFT.Nx do
     {:ok, Evision.Mat.from_nx(mask_tensor)}
   end
 
+  # ==========================================================================
+  # DFT MAGNITUDE COMPUTATION
+  # ==========================================================================
+  # This is the core FFT processing pipeline. Steps:
+  # 1. Convert to float (FFT requires floating-point input)
+  # 2. Subtract mean brightness (removes DC bias that would dominate spectrum)
+  # 3. Perform 2D FFT (Fourier Transform)
+  # 4. Compute magnitude from complex output
+  # 5. Apply log scaling to compress dynamic range
+  # 6. Shift quadrants to put DC component at center
+  # 7. Normalize to 0-255 for display
+  # ==========================================================================
   defp compute_dft_magnitude(%Evision.Mat{} = img, %Evision.Mat{} = mask) do
+    # Convert to 32-bit float - FFT operates on floating-point numbers
     float_mat = Evision.Mat.as_type(img, {:f, 32})
     {height, width} = get_dimensions(float_mat)
 
+    # Subtract mean brightness within the aperture mask
+    # This is critical: without it, the DC (zero-frequency) component would
+    # be huge and dominate the entire spectrum visualization
     mean_scalar = Evision.mean(float_mat, mask: mask)
     mean_val = elem(mean_scalar, 0)
-
     centered_mat = Evision.subtract(float_mat, {mean_val, 0, 0, 0})
 
+    # OpenCV's DFT expects complex input as 2-channel image: [real, imaginary]
+    # We start with real data, so imaginary channel is all zeros
     zeros_mat = Evision.Mat.zeros({height, width}, {:f, 32})
     complex_mat = Evision.merge([centered_mat, zeros_mat])
 
     case Evision.dft(complex_mat) do
       %Evision.Mat{} = dft_result ->
+        # Convert result to Nx tensor for vectorized operations
         dft_tensor = Evision.Mat.to_nx(dft_result, EXLA.Backend)
 
+        # FFT output is complex: channel 0 = real, channel 1 = imaginary
         real_part = dft_tensor[[.., .., 0]]
         imag_part = dft_tensor[[.., .., 1]]
 
+        # Magnitude = sqrt(real² + imag²)
+        # This gives the amplitude of each frequency component
         magnitude =
           Nx.add(Nx.multiply(real_part, real_part), Nx.multiply(imag_part, imag_part))
           |> Nx.sqrt()
 
+        # Log scaling: log(1 + magnitude)
+        # The +1 handles zero values (log(0) would be -infinity)
+        # Log scaling compresses the huge dynamic range of the spectrum
+        # so that both strong peaks and weak details are visible
         magnitude_log =
           magnitude
           |> Nx.add(1.0)
           |> Nx.log()
 
+        # Shift quadrants to put DC (zero frequency) at the center
+        # Standard FFT output has DC at corners - this is hard to interpret
         shifted = shift_dft(magnitude_log)
 
+        # Normalize to 0-255 range for display as an 8-bit grayscale image
         min_val = Nx.to_number(Nx.reduce_min(shifted))
         max_val = Nx.to_number(Nx.reduce_max(shifted))
         range = max(max_val - min_val, 1.0e-10)
@@ -150,16 +222,43 @@ defmodule RougailSolstice.Interferometry.DFT.Nx do
     end
   end
 
+  # ==========================================================================
+  # QUADRANT SHIFT (fftshift)
+  # ==========================================================================
+  # The raw FFT output has the DC (zero-frequency) component at the corners,
+  # with positive frequencies in the first half and negative frequencies
+  # (due to aliasing) in the second half. This is mathematically correct
+  # but visually confusing.
+  #
+  # This function rearranges the quadrants to put DC at the center:
+  #
+  # Before shift:        After shift:
+  # +-------+-------+    +-------+-------+
+  # |  Q0   |  Q1   |    |  Q3   |  Q2   |
+  # | (DC)  |       |    |       |       |
+  # +-------+-------+ => +-------+-------+
+  # |  Q2   |  Q3   |    |  Q1   |  Q0   |
+  # |       |       |    |       | (DC)  |
+  # +-------+-------+    +-------+-------+
+  #
+  # Diagonally opposite quadrants are swapped.
+  # ==========================================================================
   defp shift_dft(tensor) do
     {height, width} = Nx.shape(tensor) |> then(&{elem(&1, 0), elem(&1, 1)})
     cx = div(width, 2)
     cy = div(height, 2)
 
+    # Extract the four quadrants
+    # top-left (contains DC)
     q0 = tensor[[0..(cy - 1), 0..(cx - 1)]]
+    # top-right
     q1 = tensor[[0..(cy - 1), cx..(width - 1)]]
+    # bottom-left
     q2 = tensor[[cy..(height - 1), 0..(cx - 1)]]
+    # bottom-right
     q3 = tensor[[cy..(height - 1), cx..(width - 1)]]
 
+    # Swap diagonally opposite quadrants
     top = Nx.concatenate([q3, q2], axis: 1)
     bottom = Nx.concatenate([q1, q0], axis: 1)
     Nx.concatenate([top, bottom], axis: 0)
