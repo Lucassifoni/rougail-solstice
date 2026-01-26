@@ -1,13 +1,12 @@
 defmodule RougailSolstice.Interferometry.CLI do
   @moduledoc """
-  Interface for interferometry analysis using sidecar processes.
+  Interface for interferometry analysis.
   Provides functions to generate DFT previews and run full interferogram analysis.
 
   All operations use in-memory binary data - no filesystem I/O.
 
-  For DFT preview generation, two backends are available:
-  - `dft_backend: :sidecar` (default) - uses the C++ sidecar process
-  - `dft_backend: :nx` - uses pure Elixir/Nx/Evision implementation
+  DFT preview uses pure Elixir/Nx/Evision implementation.
+  Analysis uses the sidecar process (C++ via dftfringe-cli).
   """
 
   require Logger
@@ -34,49 +33,27 @@ defmodule RougailSolstice.Interferometry.CLI do
         }
 
   @doc """
-  Returns the DFT backend to use for preview generation.
-  - `:sidecar` (default) - uses C++ sidecar process
-  - `:nx` - uses Elixir/Nx/Evision implementation
-  """
-  @spec dft_backend() :: :sidecar | :nx
-  def dft_backend, do: Keyword.get(config(), :dft_backend, :sidecar)
-
-  @doc """
-  Returns the DFT size for Nx backend (default: 512).
+  Returns the DFT size (default: 512).
   """
   @spec dft_size() :: pos_integer()
   def dft_size, do: Keyword.get(config(), :dft_size, 512)
 
   @doc """
-  Generate a DFT preview image from binary data.
+  Generate a DFT preview image from binary data using Nx/Evision.
   Returns `{:ok, {:binary, png_data}}` on success.
   """
   @spec dft_preview(binary(), circle(), keyword()) ::
           {:ok, {:binary, binary()}} | {:error, term()}
-  def dft_preview(image_binary, circle, opts \\ []) do
-    session_id = Keyword.get(opts, :session_id)
-
-    case {mode(), dft_backend()} do
-      {:mock, _} -> {:ok, {:binary, mock_png_data()}}
-      {_, :nx} -> run_dft_preview_nx(image_binary, circle)
-      {_, :sidecar} -> run_dft_preview_sidecar(image_binary, circle, session_id)
+  def dft_preview(image_binary, circle, _opts \\ []) do
+    case mode() do
+      :mock -> {:ok, {:binary, mock_png_data()}}
+      _ -> run_dft_preview_nx(image_binary, circle)
     end
   end
 
   defp run_dft_preview_nx(image_binary, circle) do
     case DFTNx.compute_magnitude_preview(image_binary, circle, dft_size: dft_size()) do
       {:ok, png_binary} -> {:ok, {:binary, png_binary}}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp run_dft_preview_sidecar(image_binary, circle, session_id) do
-    worker = Supervisor.preview_worker(session_id)
-
-    with {:ok, response} <- Worker.send_preview(worker, image_binary, circle),
-         {:ok, png_binary} <- decode_base64_field(response, :dft) do
-      {:ok, {:binary, png_binary}}
-    else
       {:error, reason} -> {:error, reason}
     end
   end
@@ -153,13 +130,6 @@ defmodule RougailSolstice.Interferometry.CLI do
       {index, value}
     end)
     |> Map.new()
-  end
-
-  defp decode_base64_field(response, key) do
-    case response[key] do
-      nil -> {:error, {:missing_field, key}}
-      value -> Base.decode64(value)
-    end
   end
 
   defp config do

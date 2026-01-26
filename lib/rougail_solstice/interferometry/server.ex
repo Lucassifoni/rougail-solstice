@@ -21,7 +21,7 @@ defmodule RougailSolstice.Interferometry.Server do
   alias RougailSolstice.Sessions.Topics
 
   @pubsub RougailSolstice.PubSub
-  @preview_interval 200
+  @preview_interval 100
 
   defstruct [
     :interf_state,

@@ -11,7 +11,7 @@ defmodule RougailSolstice.Interferometry.Sidecar.Worker do
 
   alias RougailSolstice.Interferometry.Sidecar.Protocol
 
-  @type role :: :preview | :analyze
+  @type role :: :analyze
 
   defstruct [:port, :role, :buffer, :caller, :mode, :docker_image]
 
@@ -24,11 +24,6 @@ defmodule RougailSolstice.Interferometry.Sidecar.Worker do
   @spec send_config(GenServer.server(), map()) :: :ok | {:error, term()}
   def send_config(worker, config) do
     GenServer.call(worker, {:config, config}, 10_000)
-  end
-
-  @spec send_preview(GenServer.server(), binary(), map()) :: {:ok, map()} | {:error, term()}
-  def send_preview(worker, image_binary, circle) do
-    GenServer.call(worker, {:preview, image_binary, circle}, 30_000)
   end
 
   @spec send_analyze(GenServer.server(), binary(), map()) :: {:ok, map()} | {:error, term()}
@@ -69,11 +64,6 @@ defmodule RougailSolstice.Interferometry.Sidecar.Worker do
   @impl true
   def handle_call({:config, config}, from, state) do
     message = Protocol.encode_config(config)
-    send_and_await(message, from, state)
-  end
-
-  def handle_call({:preview, image_binary, circle}, from, state) do
-    message = Protocol.encode_preview(image_binary, circle)
     send_and_await(message, from, state)
   end
 

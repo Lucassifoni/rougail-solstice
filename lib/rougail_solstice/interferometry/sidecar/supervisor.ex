@@ -1,12 +1,9 @@
 defmodule RougailSolstice.Interferometry.Sidecar.Supervisor do
   @moduledoc """
-  Supervisor for DFTFringe sidecar workers.
+  Supervisor for the DFTFringe analysis sidecar worker.
 
-  Starts two worker processes:
-  - :sidecar_preview - handles DFT preview generation
-  - :sidecar_analyze - handles full wavefront analysis
-
-  Both workers are restarted independently on failure.
+  Starts a single worker process for full wavefront analysis.
+  DFT preview generation is handled by the Nx backend.
   Supports session-scoped operation with optional session_id.
   """
 
@@ -28,14 +25,9 @@ defmodule RougailSolstice.Interferometry.Sidecar.Supervisor do
   @impl true
   def init(opts) do
     session_id = Keyword.get(opts, :session_id)
-
-    preview_name = worker_name(session_id, :preview)
     analyze_name = worker_name(session_id, :analyze)
 
     children = [
-      Supervisor.child_spec({Worker, name: preview_name, role: :preview},
-        id: {:sidecar_preview, session_id}
-      ),
       Supervisor.child_spec({Worker, name: analyze_name, role: :analyze},
         id: {:sidecar_analyze, session_id}
       )
@@ -49,9 +41,6 @@ defmodule RougailSolstice.Interferometry.Sidecar.Supervisor do
   defp worker_name(session_id, role) do
     {:via, Registry, {SessionRegistry, {session_id, :"sidecar_#{role}"}}}
   end
-
-  @spec preview_worker(integer() | nil) :: atom() | {:via, module(), term()}
-  def preview_worker(session_id \\ nil), do: worker_name(session_id, :preview)
 
   @spec analyze_worker(integer() | nil) :: atom() | {:via, module(), term()}
   def analyze_worker(session_id \\ nil), do: worker_name(session_id, :analyze)

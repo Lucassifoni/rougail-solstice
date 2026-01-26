@@ -50,35 +50,6 @@ defmodule RougailSolstice.Interferometry.Sidecar.ProtocolTest do
     end
   end
 
-  describe "encode_preview/2" do
-    test "encodes preview request with circle" do
-      image = "fake image data"
-      circle = %{cx: 320, cy: 240, r: 200}
-
-      result = Protocol.encode_preview(image, circle)
-      encoded = IO.iodata_to_binary(result)
-
-      assert encoded =~ "cmd\tpreview\n"
-      assert encoded =~ "image\t#{Base.encode64(image)}\n"
-      assert encoded =~ "outside_cx\t320\n"
-      assert encoded =~ "outside_cy\t240\n"
-      assert encoded =~ "outside_r\t200\n"
-      assert String.ends_with?(encoded, "---\n")
-    end
-
-    test "includes center obstruction when present" do
-      image = "data"
-      circle = %{cx: 320, cy: 240, r: 200, center_cx: 320, center_cy: 240, center_r: 50}
-
-      result = Protocol.encode_preview(image, circle)
-      encoded = IO.iodata_to_binary(result)
-
-      assert encoded =~ "center_cx\t320\n"
-      assert encoded =~ "center_cy\t240\n"
-      assert encoded =~ "center_r\t50\n"
-    end
-  end
-
   describe "encode_analyze/2" do
     test "encodes analyze request" do
       image = "image data"

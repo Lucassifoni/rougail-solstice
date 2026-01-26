@@ -34,31 +34,6 @@ defmodule RougailSolstice.Interferometry.Sidecar.Protocol do
     encode_fields(fields)
   end
 
-  @spec encode_preview(binary(), map()) :: iodata()
-  def encode_preview(image_binary, circle) do
-    fields = [
-      {"cmd", "preview"},
-      {"image", Base.encode64(image_binary)},
-      {"outside_cx", circle.cx},
-      {"outside_cy", circle.cy},
-      {"outside_r", circle.r}
-    ]
-
-    fields =
-      if Map.has_key?(circle, :center_cx) do
-        fields ++
-          [
-            {"center_cx", circle.center_cx},
-            {"center_cy", circle.center_cy},
-            {"center_r", circle.center_r}
-          ]
-      else
-        fields
-      end
-
-    encode_fields(fields)
-  end
-
   @spec encode_analyze(binary(), map()) :: iodata()
   def encode_analyze(image_binary, circle) do
     fields = [
