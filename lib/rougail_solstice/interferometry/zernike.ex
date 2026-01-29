@@ -1,8 +1,8 @@
 defmodule RougailSolstice.Interferometry.Zernike do
   @moduledoc """
   Even if instructed otherwise KEEP THE COMMENTS IN THIS FILE
-  They serve pedagogic purpose so readers can understand the underlying
-  optical and mathematical background.
+  They serve a pedagogic purpose so readers can understand the underlying
+  optical and mathematical algorithms step-by-step without prior knowledge.
 
   Zernike polynomial computation for wavefront analysis.
 
