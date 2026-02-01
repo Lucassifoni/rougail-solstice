@@ -48,6 +48,22 @@ defmodule RougailSolsticeWeb.GamepadChannelTest do
     end
   end
 
+  describe "drive_motor" do
+    test "does not crash when motor server is nil", %{socket: socket} do
+      ref =
+        push(socket, "drive_motor", %{"axis" => "x", "direction" => "positive", "speed" => 100})
+
+      refute_reply ref, _
+    end
+  end
+
+  describe "stop_motor" do
+    test "does not crash when motor server is nil", %{socket: socket} do
+      ref = push(socket, "stop_motor", %{})
+      refute_reply ref, _
+    end
+  end
+
   describe "toggle_liveview" do
     test "toggles liveview state", %{socket: socket, servers: servers} do
       initial = InterfServer.get_state(servers.interferometry)

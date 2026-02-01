@@ -11,6 +11,7 @@ defmodule RougailSolstice.Sessions.SessionManager do
   require Logger
 
   alias RougailSolstice.OpticalPieces
+  alias RougailSolstice.Sessions.Registry, as: SessionRegistry
   alias RougailSolstice.Sessions.SessionSupervisor
   alias RougailSolstice.Sessions.Topics
 
@@ -54,7 +55,8 @@ defmodule RougailSolstice.Sessions.SessionManager do
         robot: SessionSupervisor.get_server(session_id, :robot),
         interferometry: SessionSupervisor.get_server(session_id, :interferometry),
         outline: SessionSupervisor.get_server(session_id, :outline),
-        image_store: SessionSupervisor.get_server(session_id, :image_store)
+        image_store: SessionSupervisor.get_server(session_id, :image_store),
+        motor: lookup_optional_server(session_id, :motor)
       }
     end
   end
@@ -150,5 +152,12 @@ defmodule RougailSolstice.Sessions.SessionManager do
     }
 
     DynamicSupervisor.start_child(@dynamic_sup, child_spec)
+  end
+
+  defp lookup_optional_server(session_id, role) do
+    case Registry.lookup(SessionRegistry, {session_id, role}) do
+      [{_pid, _}] -> SessionSupervisor.get_server(session_id, role)
+      [] -> nil
+    end
   end
 end

@@ -27,7 +27,31 @@ defmodule RougailSolsticeWeb.GamepadChannel do
     end
   end
 
+  @axis_map %{"x" => :axis1, "y" => :axis2, "z" => :axis3}
+
   @impl true
+  def handle_in(
+        "drive_motor",
+        %{"axis" => axis_str, "direction" => dir, "speed" => speed},
+        socket
+      ) do
+    with {:ok, axis} <- Map.fetch(@axis_map, axis_str),
+         direction when direction in [:positive, :negative] <- String.to_existing_atom(dir),
+         motor when motor != nil <- socket.assigns.servers.motor do
+      Commands.drive_motor(motor, axis, direction, speed)
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_in("stop_motor", _params, socket) do
+    if motor = socket.assigns.servers.motor do
+      Commands.stop_motor(motor)
+    end
+
+    {:noreply, socket}
+  end
+
   def handle_in("move_axis", %{"axis" => axis, "delta" => delta}, socket) do
     axis = String.to_existing_atom(axis)
     Commands.move_axis(socket.assigns.servers.robot, axis, delta)

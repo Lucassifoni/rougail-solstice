@@ -55,10 +55,16 @@ defmodule RougailSolstice.Sessions.SessionSupervisor do
          image_store: via(session_id, :image_store),
          optical_piece: optical_piece,
          outline_server: outline_server}
-      ] ++ sidecar_children(session_id)
+      ] ++ motor_children(session_id, optical_piece) ++ sidecar_children(session_id)
 
     Supervisor.init(children, strategy: :one_for_one)
   end
+
+  defp motor_children(session_id, %{robot_port: port}) when is_binary(port) do
+    [{RougailSolstice.Robot.Motor.Controller, name: via(session_id, :motor), port: port}]
+  end
+
+  defp motor_children(_session_id, _optical_piece), do: []
 
   defp sidecar_children(session_id) do
     cli_config = Application.get_env(:rougail_solstice, RougailSolstice.Interferometry.CLI, [])

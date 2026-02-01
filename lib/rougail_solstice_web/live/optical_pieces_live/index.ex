@@ -15,7 +15,8 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
      socket
      |> assign(:optical_pieces, OpticalPieces.list_optical_pieces())
      |> assign(:detected_cameras, [])
-     |> assign(:connected_ports, fetch_connected_ports())}
+     |> assign(:connected_ports, fetch_connected_ports())
+     |> assign(:detected_serial_ports, [])}
   end
 
   @impl true
@@ -102,6 +103,30 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
     {:noreply, assign(socket, :form, to_form(changeset))}
   end
 
+  def handle_event("detect_serial_ports", _params, socket) do
+    ports =
+      Circuits.UART.enumerate()
+      |> Enum.filter(fn {name, _info} ->
+        String.match?(name, ~r/(usbmodem|ttyACM|ttyUSB|usbserial)/i)
+      end)
+      |> Enum.map(fn {name, info} ->
+        description = Map.get(info, :description, "")
+        %{port: name, description: description}
+      end)
+
+    {:noreply, assign(socket, :detected_serial_ports, ports)}
+  end
+
+  def handle_event("assign_robot_port", %{"port" => port}, socket) do
+    params = %{"robot_port" => port}
+
+    changeset =
+      socket.assigns.optical_piece
+      |> OpticalPieces.change_optical_piece(Map.merge(socket.assigns.form.params || %{}, params))
+
+    {:noreply, assign(socket, :form, to_form(changeset))}
+  end
+
   def handle_event("validate", %{"optical_piece" => params}, socket) do
     changeset =
       socket.assigns.optical_piece
@@ -170,6 +195,7 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
             form={@form}
             action={@live_action}
             detected_cameras={@detected_cameras}
+            detected_serial_ports={@detected_serial_ports}
           />
         </div>
 
@@ -202,6 +228,9 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
                 </span>
               </div>
               <div :if={!op.camera_port} class="text-sm text-gray-400 italic">No camera assigned</div>
+              <div :if={op.robot_port} class="text-sm text-gray-600">
+                Robot: {op.robot_port}
+              </div>
               <div :if={op.notes} class="text-sm text-gray-500 mt-1">{op.notes}</div>
             </div>
             <div class="flex gap-2">
@@ -302,6 +331,47 @@ defmodule RougailSolsticeWeb.OpticalPiecesLive.Index do
             <label class="block text-sm font-medium mb-1">Camera Model</label>
             <.input type="text" field={@form[:camera_model]} />
           </div>
+        </div>
+      </div>
+
+      <div class="border-t pt-4 mt-4">
+        <div class="flex justify-between items-center mb-2">
+          <h3 class="font-medium">Robot Serial Port</h3>
+          <button
+            type="button"
+            phx-click="detect_serial_ports"
+            class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 rounded text-sm font-medium transition-colors"
+          >
+            Detect Ports
+          </button>
+        </div>
+
+        <div :if={@detected_serial_ports != []} class="mb-2 text-sm text-gray-600">
+          Detected serial ports (click to assign):
+          <ul class="list-disc ml-4">
+            <li
+              :for={p <- @detected_serial_ports}
+              phx-click="assign_robot_port"
+              phx-value-port={p.port}
+              class="cursor-pointer hover:text-blue-600 hover:underline"
+            >
+              {p.port}
+              <span :if={p.description != ""} class="text-gray-400">
+                ({p.description})
+              </span>
+            </li>
+          </ul>
+        </div>
+
+        <div :if={@detected_serial_ports == []} class="mb-2 text-sm text-gray-400 italic">
+          No Arduino-like serial ports detected. Click "Detect Ports" to scan.
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium mb-1">
+            Robot Port (e.g. /dev/tty.usbmodem14101)
+          </label>
+          <.input type="text" field={@form[:robot_port]} />
         </div>
       </div>
 

@@ -17,6 +17,7 @@ defmodule RougailSolstice.OpticalPieces.OpticalPiece do
           is_default: boolean(),
           camera_port: String.t() | nil,
           camera_model: String.t() | nil,
+          robot_port: String.t() | nil,
           notes: String.t() | nil,
           inserted_at: NaiveDateTime.t() | nil,
           updated_at: NaiveDateTime.t() | nil
@@ -32,6 +33,7 @@ defmodule RougailSolstice.OpticalPieces.OpticalPiece do
     field :is_default, :boolean, default: false
     field :camera_port, :string
     field :camera_model, :string
+    field :robot_port, :string
     field :notes, :string
 
     timestamps()
@@ -45,6 +47,7 @@ defmodule RougailSolstice.OpticalPieces.OpticalPiece do
     :is_default,
     :camera_port,
     :camera_model,
+    :robot_port,
     :notes
   ]
 

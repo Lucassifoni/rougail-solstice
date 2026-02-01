@@ -9,6 +9,7 @@ defmodule RougailSolstice.Commands do
 
   alias RougailSolstice.Interferometry.Server, as: InterfServer
   alias RougailSolstice.Outline.Server, as: OutlineServer
+  alias RougailSolstice.Robot.Motor.{Command, Controller, Program, Runner}
   alias RougailSolstice.Robot.Server, as: RobotServer
 
   @type result :: {:ok, term()} | {:error, term()}
@@ -152,5 +153,31 @@ defmodule RougailSolstice.Commands do
   @spec update_outline_state_params(GenServer.server(), map()) :: :ok
   def update_outline_state_params(outline_server, params) when is_map(params) do
     OutlineServer.update_state_params(outline_server, params)
+  end
+
+  @spec drive_motor(GenServer.server(), atom(), atom(), 0..255) :: :ok
+  def drive_motor(motor_server, axis, direction, speed)
+      when axis in [:axis1, :axis2, :axis3] and direction in [:positive, :negative] and
+             speed >= 0 do
+    cmd = Command.idle() |> Command.set_axis(axis, direction, speed)
+    Controller.send_command(motor_server, cmd)
+  end
+
+  @spec stop_motor(GenServer.server()) :: :ok
+  def stop_motor(motor_server) do
+    Controller.stop_all(motor_server)
+  end
+
+  @spec run_motor_program(GenServer.server(), String.t(), keyword()) ::
+          {:ok, pid()} | {:error, term()}
+  def run_motor_program(motor_server, program_text, opts \\ []) do
+    case Program.parse(program_text) do
+      {:ok, instructions} ->
+        task = Task.async(fn -> Runner.run(motor_server, instructions, opts) end)
+        {:ok, task.pid}
+
+      {:error, _} = err ->
+        err
+    end
   end
 end
