@@ -181,7 +181,7 @@ defmodule RougailSolstice.Interferometry.DFT.Nx do
     case Evision.dft(complex_mat) do
       %Evision.Mat{} = dft_result ->
         # Convert result to Nx tensor for vectorized operations
-        dft_tensor = Evision.Mat.to_nx(dft_result, EXLA.Backend)
+        dft_tensor = Evision.Mat.to_nx(dft_result, Torchx.Backend)
 
         # FFT output is complex: channel 0 = real, channel 1 = imaginary
         real_part = dft_tensor[[.., .., 0]]

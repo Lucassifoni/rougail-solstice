@@ -337,7 +337,7 @@ defmodule RougailSolstice.Outline.Detection do
     url = RougailSolstice.ImageStore.session_url(session_ctx.session_id, key)
     broadcast_preview_edges(url, session_ctx.session_id)
 
-    edges_tensor = Evision.Mat.to_nx(edges, EXLA.Backend)
+    edges_tensor = Evision.Mat.to_nx(edges, Torchx.Backend)
 
     center_x = sw / 2
     center_y = sh / 2
@@ -559,7 +559,7 @@ defmodule RougailSolstice.Outline.Detection do
     tensors =
       Enum.map(mats, fn mat ->
         mat
-        |> Evision.Mat.to_nx(EXLA.Backend)
+        |> Evision.Mat.to_nx(Torchx.Backend)
         |> Nx.as_type(:f32)
       end)
 

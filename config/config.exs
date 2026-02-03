@@ -62,7 +62,7 @@ config :logger, :default_formatter,
 config :phoenix, :json_library, Jason
 
 # Use EXLA as the default Nx backend
-config :nx, default_backend: EXLA.Backend
+config :nx, default_backend: Torchx.Backend
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
