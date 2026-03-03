@@ -56,9 +56,6 @@ defmodule RougailSolsticeWeb.RobotLive do
          |> assign(:wft_version, 0)
          |> assign(:auto_outline_enabled, outline_state.enabled)
          |> assign(:has_motor, has_motor)
-         |> assign(:motor_program, "")
-         |> assign(:motor_program_running, false)
-         |> assign(:motor_program_progress, nil)
          |> assign(:error, nil)}
 
       {:error, :not_found} ->
@@ -76,19 +73,6 @@ defmodule RougailSolsticeWeb.RobotLive do
 
     socket =
       case Commands.move_axis(socket.assigns.servers.robot, axis, delta) do
-        {:ok, _state} -> assign(socket, :error, nil)
-        {:error, reason} -> assign(socket, :error, format_error(reason))
-      end
-
-    {:noreply, socket}
-  end
-
-  def handle_event("set_position", %{"axis" => axis, "position" => position}, socket) do
-    axis = String.to_existing_atom(axis)
-    position = String.to_integer(position)
-
-    socket =
-      case Commands.set_axis_position(socket.assigns.servers.robot, axis, position) do
         {:ok, _state} -> assign(socket, :error, nil)
         {:error, reason} -> assign(socket, :error, format_error(reason))
       end
@@ -308,52 +292,12 @@ defmodule RougailSolsticeWeb.RobotLive do
     {:noreply, socket}
   end
 
-  def handle_event("run_motor_program", %{"program" => text}, socket) do
-    motor = socket.assigns.servers.motor
-
-    socket =
-      if motor do
-        case Commands.run_motor_program(motor, text, session_id: socket.assigns.session_id) do
-          {:ok, _pid} ->
-            socket
-            |> assign(:motor_program, text)
-            |> assign(:motor_program_running, true)
-            |> assign(:error, nil)
-
-          {:error, {line, reason}} ->
-            assign(socket, :error, "Program error line #{line}: #{reason}")
-
-          {:error, reason} ->
-            assign(socket, :error, "Program error: #{inspect(reason)}")
-        end
-      else
-        socket
-      end
-
-    {:noreply, socket}
-  end
-
-  def handle_event("update_motor_program", %{"program" => text}, socket) do
-    {:noreply, assign(socket, :motor_program, text)}
-  end
-
   def handle_event("close_session", _params, socket) do
     SessionManager.close_session(socket.assigns.session_id)
     {:noreply, push_navigate(socket, to: ~p"/")}
   end
 
   @impl true
-  def handle_info({:program_progress, index, total}, socket) do
-    if index >= total do
-      {:noreply,
-       socket
-       |> assign(:motor_program_running, false)
-       |> assign(:motor_program_progress, nil)}
-    else
-      {:noreply, assign(socket, :motor_program_progress, {index, total})}
-    end
-  end
-
   def handle_info({:robot_state_changed, state}, socket) do
     {:noreply, assign(socket, :state, state)}
   end
@@ -448,11 +392,9 @@ defmodule RougailSolsticeWeb.RobotLive do
   defp motor_connected?(nil), do: false
 
   defp motor_connected?(server) do
-    try do
-      MotorController.connected?(server)
-    catch
-      :exit, _ -> false
-    end
+    MotorController.connected?(server)
+  catch
+    :exit, _ -> false
   end
 
   defp format_error(reason) when is_atom(reason) do
@@ -534,12 +476,7 @@ defmodule RougailSolsticeWeb.RobotLive do
         <.error_banner error={@error} />
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <.motor_controls
-            :if={@has_motor}
-            motor_program={@motor_program}
-            motor_program_running={@motor_program_running}
-            motor_program_progress={@motor_program_progress}
-          />
+          <.motor_controls :if={@has_motor} />
           <.axis_controls :if={!@has_motor} state={@state} />
           <.camera_controls state={@state} adapters={@adapters} />
           <.optical_config_controls
@@ -610,46 +547,6 @@ defmodule RougailSolsticeWeb.RobotLive do
         <.motor_axis_control axis="x" label="X" gamepad_hint="L Stick X" />
         <.motor_axis_control axis="y" label="Y" gamepad_hint="L Stick Y" />
         <.motor_axis_control axis="z" label="Z" gamepad_hint="ZL / ZR" />
-      </div>
-
-      <div class="mt-6 border-t pt-4">
-        <h3 class="text-sm font-semibold mb-2">Program</h3>
-        <form phx-submit="run_motor_program" phx-change="update_motor_program">
-          <textarea
-            name="program"
-            rows="8"
-            class="w-full px-3 py-2 border border-gray-300 rounded-md font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="X speed 200\nX positive\nX step 500\nsleep 300\nX negative\nX step 500\nstop"
-            disabled={@motor_program_running}
-          >{@motor_program}</textarea>
-
-          <div class="flex items-center gap-2 mt-2">
-            <button
-              type="submit"
-              disabled={@motor_program_running}
-              class={[
-                "px-4 py-2 rounded font-medium transition-colors",
-                if(@motor_program_running,
-                  do: "bg-gray-200 text-gray-400 cursor-not-allowed",
-                  else: "bg-green-500 hover:bg-green-600 text-white"
-                )
-              ]}
-            >
-              Run
-            </button>
-            <button
-              :if={@motor_program_running}
-              type="button"
-              phx-click="stop_motor"
-              class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded font-medium transition-colors"
-            >
-              Stop
-            </button>
-            <span :if={@motor_program_progress} class="text-sm text-gray-500">
-              Step {elem(@motor_program_progress, 0) + 1} / {elem(@motor_program_progress, 1)}
-            </span>
-          </div>
-        </form>
       </div>
     </div>
     """
@@ -777,17 +674,6 @@ defmodule RougailSolsticeWeb.RobotLive do
           +100
         </button>
       </div>
-
-      <input
-        type="range"
-        min={@axis_state.min}
-        max={@axis_state.max}
-        value={@axis_state.position}
-        phx-change="set_position"
-        phx-value-axis={@axis}
-        name="position"
-        class="w-full"
-      />
     </div>
     """
   end

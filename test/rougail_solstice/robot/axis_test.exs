@@ -83,34 +83,4 @@ defmodule RougailSolstice.Robot.AxisTest do
       assert moved.position == 500
     end
   end
-
-  describe "set_position/2" do
-    setup do
-      {:ok, axis} = Axis.new(:x, 0, 1000, 500)
-      %{axis: axis}
-    end
-
-    test "sets valid position", %{axis: axis} do
-      assert {:ok, updated} = Axis.set_position(axis, 750)
-      assert updated.position == 750
-    end
-
-    test "sets position to minimum", %{axis: axis} do
-      assert {:ok, updated} = Axis.set_position(axis, 0)
-      assert updated.position == 0
-    end
-
-    test "sets position to maximum", %{axis: axis} do
-      assert {:ok, updated} = Axis.set_position(axis, 1000)
-      assert updated.position == 1000
-    end
-
-    test "rejects position below minimum", %{axis: axis} do
-      assert {:error, :below_minimum} = Axis.set_position(axis, -1)
-    end
-
-    test "rejects position above maximum", %{axis: axis} do
-      assert {:error, :above_maximum} = Axis.set_position(axis, 1001)
-    end
-  end
 end

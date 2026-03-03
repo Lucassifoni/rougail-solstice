@@ -9,7 +9,7 @@ defmodule RougailSolstice.Commands do
 
   alias RougailSolstice.Interferometry.Server, as: InterfServer
   alias RougailSolstice.Outline.Server, as: OutlineServer
-  alias RougailSolstice.Robot.Motor.{Command, Controller, Program, Runner}
+  alias RougailSolstice.Robot.Motor.{Command, Controller}
   alias RougailSolstice.Robot.Server, as: RobotServer
 
   @type result :: {:ok, term()} | {:error, term()}
@@ -18,12 +18,6 @@ defmodule RougailSolstice.Commands do
   def move_axis(robot_server, axis, delta)
       when axis in [:x, :y, :z] and is_integer(delta) do
     RobotServer.move_axis(robot_server, axis, delta)
-  end
-
-  @spec set_axis_position(GenServer.server(), atom(), integer()) :: result()
-  def set_axis_position(robot_server, axis, position)
-      when axis in [:x, :y, :z] and is_integer(position) do
-    RobotServer.set_axis_position(robot_server, axis, position)
   end
 
   @spec lock_camera(GenServer.server()) :: result()
@@ -166,18 +160,5 @@ defmodule RougailSolstice.Commands do
   @spec stop_motor(GenServer.server()) :: :ok
   def stop_motor(motor_server) do
     Controller.stop_all(motor_server)
-  end
-
-  @spec run_motor_program(GenServer.server(), String.t(), keyword()) ::
-          {:ok, pid()} | {:error, term()}
-  def run_motor_program(motor_server, program_text, opts \\ []) do
-    case Program.parse(program_text) do
-      {:ok, instructions} ->
-        task = Task.async(fn -> Runner.run(motor_server, instructions, opts) end)
-        {:ok, task.pid}
-
-      {:error, _} = err ->
-        err
-    end
   end
 end

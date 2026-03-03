@@ -73,22 +73,6 @@ defmodule RougailSolstice.Robot.StateTest do
     end
   end
 
-  describe "set_axis_position/3" do
-    setup do
-      {:ok, state} = State.new()
-      %{state: state}
-    end
-
-    test "sets axis to specific position", %{state: state} do
-      assert {:ok, updated} = State.set_axis_position(state, :x, 750)
-      assert updated.axes.x.position == 750
-    end
-
-    test "rejects position out of bounds", %{state: state} do
-      assert {:error, :above_maximum} = State.set_axis_position(state, :x, 1001)
-    end
-  end
-
   describe "lock_camera/1" do
     setup do
       {:ok, state} = State.new()

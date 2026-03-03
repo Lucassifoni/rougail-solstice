@@ -29,7 +29,7 @@ defmodule RougailSolstice.Outline.Detection do
           params: map()
         }
 
-  @debug_dir "priv/static/detection"
+  @debug_dir "priv/detection"
 
   @default_params %{
     edge_ray_count: 180,

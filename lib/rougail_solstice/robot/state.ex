@@ -53,20 +53,6 @@ defmodule RougailSolstice.Robot.State do
     end
   end
 
-  @spec set_axis_position(t(), axis_name(), integer()) :: {:ok, t()} | {:error, term()}
-  def set_axis_position(%__MODULE__{} = state, axis_name, position)
-      when axis_name in [:x, :y, :z] do
-    axis = state.axes[axis_name]
-
-    case Axis.set_position(axis, position) do
-      {:ok, updated_axis} ->
-        {:ok, put_in(state.axes[axis_name], updated_axis)}
-
-      {:error, _} = error ->
-        error
-    end
-  end
-
   @spec lock_camera(t()) :: {:ok, t()} | {:error, term()}
   def lock_camera(%__MODULE__{} = state) do
     case Camera.lock(state.camera) do

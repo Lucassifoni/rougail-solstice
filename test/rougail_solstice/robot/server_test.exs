@@ -58,17 +58,6 @@ defmodule RougailSolstice.Robot.ServerTest do
     end
   end
 
-  describe "set_axis_position/3" do
-    test "sets axis to position", %{server: server} do
-      assert {:ok, state} = Server.set_axis_position(server, :y, 750)
-      assert state.axes.y.position == 750
-    end
-
-    test "returns error for invalid position", %{server: server} do
-      assert {:error, :above_maximum} = Server.set_axis_position(server, :y, 1001)
-    end
-  end
-
   describe "camera operations" do
     test "lock, take picture, release workflow", %{server: server} do
       assert {:ok, locked} = Server.lock_camera(server)

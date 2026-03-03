@@ -35,8 +35,7 @@ defmodule RougailSolstice.Robot.Axis do
     set_position(axis, axis.position + delta)
   end
 
-  @spec set_position(t(), integer()) :: {:ok, t()} | {:error, term()}
-  def set_position(%__MODULE__{} = axis, position) do
+  defp set_position(%__MODULE__{} = axis, position) do
     cond do
       position < axis.min ->
         {:error, :below_minimum}

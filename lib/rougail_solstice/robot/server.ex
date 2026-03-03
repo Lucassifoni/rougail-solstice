@@ -28,10 +28,6 @@ defmodule RougailSolstice.Robot.Server do
     GenServer.call(server, {:move_axis, axis, delta})
   end
 
-  def set_axis_position(server, axis, position) do
-    GenServer.call(server, {:set_axis_position, axis, position})
-  end
-
   def lock_camera(server) do
     GenServer.call(server, :lock_camera)
   end
@@ -89,18 +85,6 @@ defmodule RougailSolstice.Robot.Server do
 
   def handle_call({:move_axis, axis, delta}, _from, state) do
     case State.move_axis(state.robot_state, axis, delta) do
-      {:ok, new_robot_state} ->
-        new_state = %{state | robot_state: new_robot_state}
-        broadcast(new_state)
-        {:reply, {:ok, new_robot_state}, new_state}
-
-      {:error, _} = error ->
-        {:reply, error, state}
-    end
-  end
-
-  def handle_call({:set_axis_position, axis, position}, _from, state) do
-    case State.set_axis_position(state.robot_state, axis, position) do
       {:ok, new_robot_state} ->
         new_state = %{state | robot_state: new_robot_state}
         broadcast(new_state)

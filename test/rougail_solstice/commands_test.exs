@@ -33,13 +33,6 @@ defmodule RougailSolstice.CommandsTest do
     end
   end
 
-  describe "set_axis_position/2" do
-    test "sets axis to absolute position", %{robot: robot} do
-      assert {:ok, state} = Commands.set_axis_position(robot, :y, 250)
-      assert state.axes.y.position == 250
-    end
-  end
-
   describe "lock_camera/0 and release_camera/0" do
     test "locks and releases camera", %{robot: robot} do
       assert {:ok, locked} = Commands.lock_camera(robot)

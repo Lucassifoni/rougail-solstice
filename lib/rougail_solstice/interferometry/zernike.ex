@@ -712,7 +712,7 @@ defmodule RougailSolstice.Interferometry.Zernike do
   """
   def fit(data, mask, outside, num_terms, opts \\ [])
       when num_terms >= 1 and num_terms <= @max_terms do
-    max_samples = Keyword.get(opts, :max_samples, 10000)
+    max_samples = Keyword.get(opts, :max_samples, 10_000)
     {height, width} = Nx.shape(data)
 
     cx = outside.cx
