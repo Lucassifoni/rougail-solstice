@@ -22,7 +22,7 @@ FROM ${BUILDER_IMAGE} AS builder
 
 # install build dependencies
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential git curl ca-certificates cmake unzip libgomp-dev \
+  && apt-get install -y build-essential git curl ca-certificates cmake unzip \
   && rm -rf /var/lib/apt/lists/*
 
 # prepare build dir
